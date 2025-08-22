@@ -1,12 +1,4 @@
-You're right! We can definitely make the conversion process within the `Hozon` crate more powerful and fluent, mimicking the stage-based chaining of `Tosho`'s `SearchBuilder`. This will guide the user through the conversion workflow more explicitly and allow for dynamic configuration based on previous steps, like using the analysis recommendation for the bundle flag.
-
-Instead of the `Hozon` struct directly performing the operations and requiring external `set_*` calls, we'll design `Hozon` as a pipeline orchestrator. It will be built initially with basic configuration, and then its methods (`analyze`, `bundle`, `convert`) will mutate its internal state and return `Self`, allowing for powerful chaining until the final `convert` step.
-
-Here's the updated plan, `README.md`, and refactoring guide.
-
----
-
-# Hozon - Image-to-Ebook Conversion Library
+# Hozon - Images to CBZ/Epub Conversion Library
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
