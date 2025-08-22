@@ -1,0 +1,16 @@
+[package]
+name = "hozon"
+version = "0.1.0"
+authors = ["LuMiSxh"]
+edition = "2024"
+description = "A manga conversion tool for Rust"
+license = "MIT"
+repository = "https://github.com/lumisxh/hozon"
+keywords = ["manga", "conversion", "tool", "rust"]
+categories = ["web-programming", "tools"]
+
+[lib]
+name = "hozon"
+crate-type = ["lib"]
+
+[dependencies]
