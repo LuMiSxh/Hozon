@@ -1,0 +1,18 @@
+/* Basic EPUB stylesheet for image-heavy content */
+
+/* General styles for the body */
+body {
+    margin: 0;
+    padding: 0;
+    text-align: center;
+    background-color: #fff;
+    color: #000;
+}
+
+/* Styles for images */
+img {
+    max-width: 100%; /* Ensure images fit within the viewport */
+    height: auto; /* Maintain aspect ratio */
+    display: block; /* Remove extra space below image */
+    margin: 0 auto; /* Center images horizontally */
+}
