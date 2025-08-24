@@ -1,7 +1,7 @@
 # Hozon - Image to Ebook Conversion Library
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://github.com/lumisxh/hozon/workflows/Security%20Audit/badge.svg)](https://github.com/lumisxh/hozon/actions)
+[![Build Status](https://github.com/lumisxh/hozon/workflows/Release/badge.svg)](https://github.com/lumisxh/hozon/actions)
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://lumisxh.github.io/hozon/)
 
 **Hozon** is a high-performance, asynchronous Rust library designed for converting image-based content (like manga or comics) into standardized ebook formats such as CBZ and EPUB. Hozon provides a robust, declarative API for flexible image collection, intelligent content structuring, and high-quality ebook generation, focusing on configuration upfront and execution on demand.
