@@ -66,7 +66,7 @@ async fn main() -> hozon::error::Result<()> {
 ### API Documentation
 
 Comprehensive API documentation is automatically generated and available at:
-**[https://lumisxh.github.io/hozon/](https://lumisxh.github.io/hozon/)**
+**[https://lumisxh.github.io/hozon/](https://lumisxh.github.io/Hozon/)**
 
 The documentation includes:
 
