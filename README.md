@@ -30,7 +30,7 @@ Add Hozon to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hozon = { git = "https://github.com/lumisxh/hozon", tag = "v1.0.0" }
+hozon = { git = "https://github.com/lumisxh/hozon", tag = "vX.X.X" }  # Replace `vX.X.X` with the version you want to use
 ```
 
 ## Quick Example
@@ -74,18 +74,6 @@ The documentation includes:
 - Detailed usage patterns and workflows
 - Configuration options and best practices
 - Error handling guides
-
-### Examples and Tutorials
-
-For detailed examples covering various use cases, including:
-
-- Converting flat image directories
-- Custom sorting with regex patterns
-- Advanced volume grouping strategies
-- Working with different ebook formats
-- Metadata configuration
-
-Visit the [documentation examples section](https://lumisxh.github.io/hozon/) for comprehensive tutorials.
 
 ## Development Status
 
