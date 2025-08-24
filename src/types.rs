@@ -9,14 +9,15 @@
 //! - Error detail types (`AnalyzeFinding`)
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::error::{Error, Result};
 
 /// Strategy for grouping collected chapters into logical volumes.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum VolumeGroupingStrategy {
     Name,          // Group by patterns in chapter folder names (e.g., "001-001" vs "002-001")
     ImageAnalysis, // Group by detecting cover-like pages (e.g., grayscale analysis)
@@ -26,7 +27,9 @@ pub enum VolumeGroupingStrategy {
 }
 
 /// How deeply to scan the source directory for chapters and pages during collection.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CollectionDepth {
     #[default]
     Deep, // Expects structure: `source_path/chapter_folder/page.jpg`
@@ -34,7 +37,9 @@ pub enum CollectionDepth {
 }
 
 /// A specific finding from the analysis stage, categorized as positive, warning, or negative.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AnalyzeFinding {
     Positive(String),
     Warning(String),
@@ -54,17 +59,19 @@ pub enum AnalyzeFinding {
 }
 
 /// Defines the output file format for the generated ebook(s).
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum FileFormat {
-    #[serde(rename = "EPUB")]
     Epub,
     #[default]
-    #[serde(rename = "CBZ")]
     Cbz,
 }
 
 /// Defines the reading direction for content within an EPUB file.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Direction {
     #[default]
     Ltr,
@@ -82,7 +89,9 @@ impl ToString for Direction {
 
 /// Comprehensive metadata for an ebook, used for generation.
 /// This struct holds all information that can be embedded into the output file(s).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EbookMetadata {
     pub title: String,
     pub series: Option<String>,
@@ -96,7 +105,7 @@ pub struct EbookMetadata {
     pub release_date: Option<DateTime<Utc>>,
     pub genre: Option<String>, // Specific genre (often for ComicInfo.xml)
     pub web: Option<String>,   // Website link (often for ComicInfo.xml)
-    #[serde(default)]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub custom_fields: HashMap<String, String>, // For arbitrary key-value pairs
 }
 
@@ -114,6 +123,8 @@ impl EbookMetadata {
 /// Immutable configuration for a Hozon conversion task, established during `HozonConfigBuilder::build()`.
 /// This holds all the user-defined settings for how the conversion should proceed.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ConversionConfig {
     pub metadata: EbookMetadata,
     pub source_path: PathBuf,
@@ -128,6 +139,8 @@ pub struct ConversionConfig {
 /// Represents the outcome of the content collection and initial analysis phase.
 /// This data structure holds the organized image paths and an `AnalyzeReport`.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CollectedContent {
     pub chapters_with_pages: Vec<Vec<PathBuf>>, // Vec<Chapter: Vec<PagePath>>
     pub report: AnalyzeReport,                  // Report from the collection/analysis phase
@@ -138,6 +151,8 @@ pub struct CollectedContent {
 /// This data structure holds the image paths organized into logical volumes
 /// and a `VolumeStructureReport`.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StructuredContent {
     pub volumes_with_chapters_and_pages: Vec<Vec<Vec<PathBuf>>>, // Vec<Volume: Vec<Chapter: Vec<PagePath>>
     pub report: VolumeStructureReport, // Report from the structuring phase
@@ -146,7 +161,9 @@ pub struct StructuredContent {
 
 /// Report from the initial content collection and analysis stage.
 /// This summarizes findings about the source material.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AnalyzeReport {
     pub findings: Vec<AnalyzeFinding>,
     pub recommended_strategy: VolumeGroupingStrategy,
@@ -154,7 +171,9 @@ pub struct AnalyzeReport {
 
 /// Report from the volume structuring (grouping) stage.
 /// This summarizes how content was organized into volumes.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VolumeStructureReport {
     pub total_chapters_processed: usize,
     pub total_volumes_created: usize,
@@ -164,6 +183,8 @@ pub struct VolumeStructureReport {
 /// Specifies the intended starting point for a Hozon conversion.
 /// Used by `HozonConfig::preflight_check` to tailor validation.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum HozonExecutionMode {
     /// The conversion will start by collecting chapters and pages from the configured `source_path`.
     FromSource,

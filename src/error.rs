@@ -10,29 +10,62 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Comprehensive error type for all Hozon operations.
 #[derive(thiserror::Error, Debug)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub enum Error {
     /// I/O errors from the standard library
     #[error(transparent)]
-    Io(#[from] std::io::Error),
+    Io(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        std::io::Error,
+    ),
     /// Regular expression parsing errors
     #[error(transparent)]
-    Regex(#[from] regex::Error),
+    Regex(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        regex::Error,
+    ),
     /// Image processing errors
     #[error(transparent)]
-    Image(#[from] image::ImageError),
+    Image(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        image::ImageError,
+    ),
     /// EPUB generation errors
     #[error(transparent)]
-    Epub(#[from] epub_builder::Error),
+    Epub(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        epub_builder::Error,
+    ),
     /// ZIP file operation errors
     #[error(transparent)]
-    Zip(#[from] zip::result::ZipError),
+    Zip(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        zip::result::ZipError,
+    ),
     /// Async task join errors
     #[error(transparent)]
-    Join(#[from] tokio::task::JoinError),
+    Join(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        tokio::task::JoinError,
+    ),
     #[error(transparent)]
-    Sephamore(#[from] tokio::sync::AcquireError),
+    Sephamore(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        tokio::sync::AcquireError,
+    ),
     #[error(transparent)]
-    HozonBuider(#[from] crate::hozon::HozonConfigBuilderError),
+    HozonBuider(
+        #[from]
+        #[cfg_attr(feature = "serde", serde(skip))]
+        crate::hozon::HozonConfigBuilderError,
+    ),
     /// Error for invalid file or directory paths
     #[error("The given path '{0:?}' is invalid: {1}")]
     InvalidPath(PathBuf, String),
@@ -61,5 +94,15 @@ impl From<String> for Error {
 impl From<&str> for Error {
     fn from(error: &str) -> Self {
         Error::Other(error.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Error {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.to_string().as_ref())
     }
 }

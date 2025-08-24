@@ -20,6 +20,8 @@ use crate::types::{
 /// entry points (`convert_from_source`, `convert_from_collected_data`, etc.).
 #[derive(Clone, derive_builder::Builder)]
 #[builder(setter(into, strip_option), build_fn(validate = "Self::validate"))]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HozonConfig {
     // --- Core Conversion Settings ---
     #[builder(default = "EbookMetadata::default_with_title(\"Untitled Conversion\".to_string())")]
@@ -46,17 +48,23 @@ pub struct HozonConfig {
     #[builder(default)]
     pub page_name_regex_str: Option<String>, // User-provided string, compiled in build()
     #[builder(default)]
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub custom_chapter_path_sorter:
         Option<Arc<dyn Fn(&PathBuf, &PathBuf) -> Ordering + Send + Sync>>,
     #[builder(default)]
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub custom_page_path_sorter: Option<Arc<dyn Fn(&PathBuf, &PathBuf) -> Ordering + Send + Sync>>,
     #[builder(default)]
     pub volume_sizes_override: Option<Vec<usize>>, // For Manual grouping strategy
 
     // --- Internal fields populated by build() after string regexes are compiled ---
     #[builder(setter(skip), default)]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "specta", specta(skip))]
     pub(crate) compiled_chapter_name_regex: Option<Regex>,
     #[builder(setter(skip), default)]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "specta", specta(skip))]
     pub(crate) compiled_page_name_regex: Option<Regex>,
 }
 

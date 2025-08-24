@@ -1,6 +1,6 @@
 [package]
 name = "hozon"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["LuMiSxh"]
 edition = "2024"
 description = "A library for converting image-based content to ebook formats (CBZ/EPUB)"
@@ -8,6 +8,15 @@ license = "MIT"
 repository = "https://github.com/lumisxh/hozon"
 keywords = ["ebook", "conversion", "cbz", "epub", "manga", "comic"]
 categories = ["multimedia", "filesystem"]
+
+[features]
+default = []
+
+# Serde support for metadata serialization
+serde = ["dep:serde"]
+
+# Specta TypeScript type generation support
+specta = ["dep:specta"]
 
 [lib]
 name = "hozon"
@@ -31,12 +40,18 @@ memmap2 = "0.9"
 log = "0.4"
 thiserror = "1.x"
 derive_builder = "0.20"
-serde = { version = "1.0", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde", "std"] }
+serde = { version = "1.0", features = ["derive"], optional = true  }
+chrono = { version = "0.4", features = ["serde", "std"]  }
 num_cpus = "1.17"
 regex = "1.11"
 lazy_static = "1.x"
 futures = "0.3"
+specta = { version = "=2.0.0-rc.22", default-features = true, features = [
+    "serde",
+    "serde_json",
+    "chrono",
+    "derive",
+], optional = true  }
 
 [dev-dependencies]
 rand = "0.8"
