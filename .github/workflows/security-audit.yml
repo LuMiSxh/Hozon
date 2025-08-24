@@ -1,0 +1,332 @@
+name: Security Audit
+
+on:
+    schedule:
+        - cron: "0 2 * * 0" # Execute weekly on Sunday at 0200 UTC
+    workflow_dispatch:
+    pull_request:
+        paths:
+            - "**/Cargo.toml"
+            - "**/Cargo.lock"
+    push:
+        branches:
+            - main
+
+permissions:
+    contents: read
+    issues: write
+
+jobs:
+    security_audit:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Initialize repository checkout
+              uses: actions/checkout@v4
+
+            - name: Configure Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Install cargo-deny security scanner
+              run: cargo install cargo-deny
+
+            - name: Execute security advisory scan
+              id: advisories
+              run: |
+                  cargo deny check advisories --format json --output advisories.json || echo "advisories_failed=true" >> $GITHUB_OUTPUT
+
+            - name: Execute dependency ban validation
+              id: bans
+              run: |
+                  cargo deny check bans --format json --output bans.json || echo "bans_failed=true" >> $GITHUB_OUTPUT
+
+            - name: Execute license compliance check
+              id: licenses
+              run: |
+                  cargo deny check licenses --format json --output licenses.json || echo "licenses_failed=true" >> $GITHUB_OUTPUT
+
+            - name: Process audit results data
+              id: process_results
+              run: |
+                  # Process advisories
+                  if [ -f advisories.json ]; then
+                    ADVISORY_COUNT=$(jq 'length' advisories.json 2>/dev/null || echo "0")
+                    echo "advisory_count=$ADVISORY_COUNT" >> $GITHUB_OUTPUT
+                    [ "$ADVISORY_COUNT" -gt 0 ] && echo "has_advisories=true" >> $GITHUB_OUTPUT || echo "has_advisories=false" >> $GITHUB_OUTPUT
+                  else
+                    echo "advisory_count=0" >> $GITHUB_OUTPUT
+                    echo "has_advisories=false" >> $GITHUB_OUTPUT
+                  fi
+
+                  # Process bans
+                  if [ -f bans.json ]; then
+                    BAN_COUNT=$(jq 'length' bans.json 2>/dev/null || echo "0")
+                    echo "ban_count=$BAN_COUNT" >> $GITHUB_OUTPUT
+                    [ "$BAN_COUNT" -gt 0 ] && echo "has_bans=true" >> $GITHUB_OUTPUT || echo "has_bans=false" >> $GITHUB_OUTPUT
+                  else
+                    echo "ban_count=0" >> $GITHUB_OUTPUT
+                    echo "has_bans=false" >> $GITHUB_OUTPUT
+                  fi
+
+                  # Process licenses
+                  if [ -f licenses.json ]; then
+                    LICENSE_COUNT=$(jq 'length' licenses.json 2>/dev/null || echo "0")
+                    echo "license_count=$LICENSE_COUNT" >> $GITHUB_OUTPUT
+                    [ "$LICENSE_COUNT" -gt 0 ] && echo "has_license_issues=true" >> $GITHUB_OUTPUT || echo "has_license_issues=false" >> $GITHUB_OUTPUT
+                  else
+                    echo "license_count=0" >> $GITHUB_OUTPUT
+                    echo "has_license_issues=false" >> $GITHUB_OUTPUT
+                  fi
+
+                  # Check if any issues exist
+                  TOTAL_ISSUES=$((ADVISORY_COUNT + BAN_COUNT + LICENSE_COUNT))
+                  echo "total_issues=$TOTAL_ISSUES" >> $GITHUB_OUTPUT
+                  [ "$TOTAL_ISSUES" -gt 0 ] && echo "has_any_issues=true" >> $GITHUB_OUTPUT || echo "has_any_issues=false" >> $GITHUB_OUTPUT
+
+            - name: Locate existing security audit issues
+              if: ${{ steps.process_results.outputs.has_any_issues == 'true' }}
+              id: find_existing_issue
+              uses: actions/github-script@v7
+              with:
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  script: |
+                      console.log('EXECUTING: Existing security audit issue search');
+
+                      // Search for open security audit issues
+                      const issues = await github.rest.issues.listForRepo({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        state: 'open',
+                        labels: 'security,audit,automated-scan',
+                        sort: 'created',
+                        direction: 'desc',
+                        per_page: 1
+                      });
+
+                      if (issues.data.length > 0) {
+                        const existingIssue = issues.data[0];
+                        console.log('STATUS: Found existing security audit issue #' + existingIssue.number);
+                        return {
+                          exists: true,
+                          issue_number: existingIssue.number,
+                          issue_title: existingIssue.title
+                        };
+                      } else {
+                        console.log('STATUS: No existing open security audit issues found');
+                        return {
+                          exists: false,
+                          issue_number: null,
+                          issue_title: null
+                        };
+                      }
+
+            - name: Generate security audit issue report
+              if: ${{ steps.process_results.outputs.has_any_issues == 'true' }}
+              uses: actions/github-script@v7
+              with:
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  script: |
+                      const fs = require('fs');
+                      const date = new Date().toISOString().split('T')[0];
+
+                      // Read result files
+                      let advisories = [];
+                      let bans = [];
+                      let licenses = [];
+
+                      try {
+                        if (fs.existsSync('advisories.json')) {
+                          advisories = JSON.parse(fs.readFileSync('advisories.json', 'utf8'));
+                        }
+                      } catch (e) { console.log('No advisories data'); }
+
+                      try {
+                        if (fs.existsSync('bans.json')) {
+                          bans = JSON.parse(fs.readFileSync('bans.json', 'utf8'));
+                        }
+                      } catch (e) { console.log('No bans data'); }
+
+                      try {
+                        if (fs.existsSync('licenses.json')) {
+                          licenses = JSON.parse(fs.readFileSync('licenses.json', 'utf8'));
+                        }
+                      } catch (e) { console.log('No license data'); }
+
+                      // Generate issue content
+                      let issueBody = `# Rust Security Audit Report\n\n`;
+                      issueBody += `**Scan Date:** ${date}\n`;
+                      issueBody += `**Repository:** ${context.repo.owner}/${context.repo.repo}\n`;
+                      issueBody += `**Execution Context:** ${context.eventName === 'schedule' ? 'Automated scheduled execution' : 'Manual execution by ' + context.actor}\n\n`;
+
+                      const totalIssues = advisories.length + bans.length + licenses.length;
+                      issueBody += `## Audit Summary\n\n`;
+                      issueBody += `| Category | Issue Count | Status |\n`;
+                      issueBody += `|----------|-------------|--------|\n`;
+                      issueBody += `| Security Advisories | ${advisories.length} | ${advisories.length > 0 ? 'FAIL' : 'PASS'} |\n`;
+                      issueBody += `| Banned Dependencies | ${bans.length} | ${bans.length > 0 ? 'FAIL' : 'PASS'} |\n`;
+                      issueBody += `| License Violations | ${licenses.length} | ${licenses.length > 0 ? 'FAIL' : 'PASS'} |\n`;
+                      issueBody += `| **Total Critical Issues** | **${totalIssues}** | ${totalIssues > 0 ? 'REQUIRES_ATTENTION' : 'COMPLIANT'} |\n\n`;
+
+                      // Security Advisories Section
+                      if (advisories.length > 0) {
+                        issueBody += `## Security Advisory Details\n\n`;
+                        advisories.forEach((issue, index) => {
+                          issueBody += `### Advisory ${index + 1}: ${issue.package?.name || 'UNKNOWN_PACKAGE'} v${issue.package?.version || 'UNKNOWN_VERSION'}\n\n`;
+
+                          if (issue.advisory) {
+                            issueBody += `| Attribute | Value |\n`;
+                            issueBody += `|-----------|-------|\n`;
+                            issueBody += `| **Advisory Identifier** | \`${issue.advisory.id || 'N/A'}\` |\n`;
+                            issueBody += `| **Severity Classification** | ${getSeverityClassification(issue.advisory.severity || 'unknown')} |\n`;
+                            issueBody += `| **Vulnerability Description** | ${issue.advisory.description || 'No description provided'} |\n`;
+                            if (issue.advisory.url) {
+                              issueBody += `| **Reference Documentation** | [External Advisory Link](${issue.advisory.url}) |\n`;
+                            }
+                            if (issue.advisory.date) {
+                              issueBody += `| **Publication Date** | ${issue.advisory.date} |\n`;
+                            }
+                          }
+                          issueBody += `\n---\n\n`;
+                        });
+                      }
+
+                      // Banned Dependencies Section
+                      if (bans.length > 0) {
+                        issueBody += `## Dependency Ban Violations\n\n`;
+                        bans.forEach((issue, index) => {
+                          issueBody += `### Violation ${index + 1}: ${issue.package?.name || 'UNKNOWN_PACKAGE'}\n\n`;
+                          issueBody += `**Ban Justification:** ${issue.reason || 'No justification specified'}\n\n`;
+                          issueBody += `---\n\n`;
+                        });
+                      }
+
+                      // License Issues Section
+                      if (licenses.length > 0) {
+                        issueBody += `## License Compliance Violations\n\n`;
+                        licenses.forEach((issue, index) => {
+                          issueBody += `### License Issue ${index + 1}: ${issue.package?.name || 'UNKNOWN_PACKAGE'}\n\n`;
+                          issueBody += `**Detected License:** ${issue.license || 'UNIDENTIFIED'}\n\n`;
+                          issueBody += `**Violation Details:** ${issue.reason || 'License not permitted by policy'}\n\n`;
+                          issueBody += `---\n\n`;
+                        });
+                      }
+
+                      // Execution Metadata
+                      issueBody += `## Execution Metadata\n\n`;
+                      issueBody += `- **Workflow Execution:** [View Detailed Logs](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n`;
+                      issueBody += `- **Commit Hash:** \`${context.sha.substring(0, 7)}\`\n`;
+                      issueBody += `- **Report Generation Time:** ${new Date().toISOString()}\n\n`;
+
+                      // Severity classification function
+                      function getSeverityClassification(severity) {
+                        const classifications = {
+                          'critical': 'CRITICAL_SEVERITY',
+                          'high': 'HIGH_SEVERITY',
+                          'medium': 'MEDIUM_SEVERITY',
+                          'low': 'LOW_SEVERITY',
+                          'informational': 'INFORMATIONAL'
+                        };
+                        return classifications[severity.toLowerCase()] || `UNCLASSIFIED_${severity.toUpperCase()}`;
+                      }
+
+                      // Determine if we should create or update issue
+                      const existingIssueData = ${{ steps.find_existing_issue.outputs.result || 'null' }};
+
+                      if (existingIssueData && existingIssueData.exists) {
+                        // Update existing issue
+                        console.log('EXECUTING: Security audit issue update #' + existingIssueData.issue_number);
+
+                        // Add update header to issue body
+                        issueBody = `**Issue Updated:** ${new Date().toISOString()}\n**Previous Issue:** ${existingIssueData.issue_title}\n\n` + issueBody;
+                        issueBody += `**Update History:** This issue was automatically updated with the latest security audit results.\n`;
+
+                        await github.rest.issues.update({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          issue_number: existingIssueData.issue_number,
+                          title: `Security Audit Report: ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} detected - ${date}`,
+                          body: issueBody,
+                          labels: ['security', 'audit', 'automated-scan', totalIssues > 0 ? 'requires-attention' : 'compliant']
+                        });
+
+                        // Add update comment
+                        await github.rest.issues.createComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          issue_number: existingIssueData.issue_number,
+                          body: `**Automated Security Audit Update - ${date}**\n\n` +
+                                `This issue has been automatically updated with the latest security audit results.\n\n` +
+                                `**Current Status:** ${totalIssues} total issue${totalIssues !== 1 ? 's' : ''} detected\n` +
+                                `**Execution Context:** ${context.eventName}\n` +
+                                `**Workflow Run:** [View Details](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+                        });
+
+                        console.log('STATUS: Security audit issue updated successfully');
+                      } else {
+                        // Create new issue
+                        console.log('EXECUTING: New security audit issue creation');
+
+                        issueBody += `**Note:** This automated security audit executes weekly and on dependency file modifications. Future audit results will update this issue.\n`;
+
+                        await github.rest.issues.create({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          title: `Security Audit Report: ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} detected - ${date}`,
+                          body: issueBody,
+                          labels: ['security', 'audit', 'automated-scan', totalIssues > 0 ? 'requires-attention' : 'compliant']
+                        });
+
+                        console.log('STATUS: New security audit issue created successfully');
+                      }
+
+            - name: Close existing security audit issues when no issues found
+              if: ${{ steps.process_results.outputs.has_any_issues == 'false' }}
+              uses: actions/github-script@v7
+              with:
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  script: |
+                      console.log('EXECUTING: Security audit completion check');
+
+                      // Search for open security audit issues
+                      const issues = await github.rest.issues.listForRepo({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        state: 'open',
+                        labels: 'security,audit,automated-scan',
+                        sort: 'created',
+                        direction: 'desc'
+                      });
+
+                      if (issues.data.length > 0) {
+                        console.log(`STATUS: Found ${issues.data.length} open security audit issue(s) to close`);
+
+                        const date = new Date().toISOString().split('T')[0];
+
+                        // Close each open security audit issue
+                        for (const issue of issues.data) {
+                          await github.rest.issues.update({
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            issue_number: issue.number,
+                            state: 'closed',
+                            labels: ['security', 'audit', 'automated-scan', 'resolved']
+                          });
+
+                          // Add closure comment
+                          await github.rest.issues.createComment({
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            issue_number: issue.number,
+                            body: `**Security Audit Completion - ${date}**\n\n` +
+                                  `This security audit issue has been automatically resolved.\n\n` +
+                                  `**Current Status:** All security checks passed\n` +
+                                  `**Resolution Context:** Automated security audit found no issues\n` +
+                                  `**Workflow Run:** [View Details](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
+                                  `**Action Required:** None - repository is compliant with security policies`
+                          });
+
+                          console.log(`STATUS: Closed security audit issue #${issue.number}`);
+                        }
+                      } else {
+                        console.log('STATUS: No open security audit issues found - repository remains compliant');
+                      }
