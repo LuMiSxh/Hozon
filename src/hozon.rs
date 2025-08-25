@@ -325,6 +325,28 @@ impl HozonConfig {
         Ok(self)
     }
 
+    /// Validates only the source-related parts of the configuration.
+    fn validate_source(&self) -> Result<()> {
+        if self.source_path.as_os_str().is_empty() {
+            return Err(Error::Other(
+                "`source_path` must be set for analysis.".to_string(),
+            ));
+        }
+        if !self.source_path.exists() {
+            return Err(Error::NotFound(format!(
+                "Source path does not exist: {:?}",
+                self.source_path
+            )));
+        }
+        if !self.source_path.is_dir() {
+            return Err(Error::InvalidPath(
+                self.source_path.clone(),
+                "Source path is not a directory.".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     // --- Core conversion entry points ---
 
     /// Starts the conversion by collecting chapters and pages from `source_path`.
@@ -362,7 +384,7 @@ impl HozonConfig {
     /// This method collects all content and runs a series of checks,
     /// returning a detailed report without performing a conversion.
     pub async fn analyze_source(self) -> Result<CollectedContent> {
-        self.preflight_check(HozonExecutionMode::FromSource)?;
+        self.validate_source()?;
 
         let collector = Collector::new(
             &self.source_path,
