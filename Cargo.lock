@@ -769,7 +769,7 @@ dependencies = [
  "regex",
  "serde",
  "specta",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "tokio",
  "zip 4.5.0",
 ]
