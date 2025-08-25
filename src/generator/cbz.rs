@@ -4,6 +4,7 @@ use crate::types::{EbookMetadata, get_file_info};
 use async_trait::async_trait;
 use chrono::prelude::*;
 use memmap2::MmapOptions;
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -98,30 +99,51 @@ impl Generator for Cbz {
 
         let mut xml = TEMPLATE.to_string();
 
-        // Basic fields
-        xml = xml.replace("%title%", &series_metadata.title);
-        xml = xml.replace("%series%", series_metadata.series.as_deref().unwrap_or(""));
+        // Helper function to escape XML characters
+        let escape_xml = |text: &str| -> String {
+            text.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+                .replace('\'', "&apos;")
+        };
+
+        // Basic fields (with XML escaping)
+        xml = xml.replace("%title%", &escape_xml(&series_metadata.title));
+        xml = xml.replace(
+            "%series%",
+            &escape_xml(series_metadata.series.as_deref().unwrap_or("")),
+        );
         xml = xml.replace("%volume%", &file_volume_number.unwrap_or(1).to_string());
         xml = xml.replace("%pagecount%", &total_pages_in_file.to_string());
         xml = xml.replace(
             "%description%",
-            series_metadata.description.as_deref().unwrap_or(""),
+            &escape_xml(series_metadata.description.as_deref().unwrap_or("")),
         );
-        xml = xml.replace("%language%", &series_metadata.language);
+        xml = xml.replace("%language%", &escape_xml(&series_metadata.language));
         xml = xml.replace(
             "%publisher%",
-            series_metadata.publisher.as_deref().unwrap_or(""),
+            &escape_xml(series_metadata.publisher.as_deref().unwrap_or("")),
         );
         xml = xml.replace(
             "%identifier%",
-            series_metadata.identifier.as_deref().unwrap_or(""),
+            &escape_xml(series_metadata.identifier.as_deref().unwrap_or("")),
         );
-        xml = xml.replace("%rights%", series_metadata.rights.as_deref().unwrap_or(""));
-        xml = xml.replace("%web%", series_metadata.web.as_deref().unwrap_or(""));
-        xml = xml.replace("%genre%", series_metadata.genre.as_deref().unwrap_or(""));
+        xml = xml.replace(
+            "%rights%",
+            &escape_xml(series_metadata.rights.as_deref().unwrap_or("")),
+        );
+        xml = xml.replace(
+            "%web%",
+            &escape_xml(series_metadata.web.as_deref().unwrap_or("")),
+        );
+        xml = xml.replace(
+            "%genre%",
+            &escape_xml(series_metadata.genre.as_deref().unwrap_or("")),
+        );
 
         // Authors (as one comma-separated string for "Writer" and "Penciller" if applicable)
-        let authors_str = series_metadata.authors.join(", ");
+        let authors_str = escape_xml(&series_metadata.authors.join(", "));
         xml = xml.replace("%writer%", &authors_str);
         xml = xml.replace("%penciller%", &authors_str);
         xml = xml.replace("%inker%", &authors_str);
@@ -129,7 +151,7 @@ impl Generator for Cbz {
         xml = xml.replace("%letterer%", &authors_str);
 
         // Tags
-        xml = xml.replace("%tags%", &series_metadata.tags.join(", "));
+        xml = xml.replace("%tags%", &escape_xml(&series_metadata.tags.join(", ")));
 
         // Dates
         let now_utc = Utc::now();
@@ -138,18 +160,27 @@ impl Generator for Cbz {
         xml = xml.replace("%month%", &release_date.month().to_string());
         xml = xml.replace("%day%", &release_date.day().to_string());
 
-        // Custom fields (can be added as <Genre> tags or custom tags if ComicInfo.xml supports)
-        let custom_fields_xml: String = series_metadata
-            .custom_fields
-            .iter()
-            .map(|(key, value)| {
-                format!("<{}>{}</{}>\n", key, value, key) // TODO: This might not be valid for ComicInfo.xml schema
-            })
-            .collect();
+        // Custom fields are safely embedded in the Notes section as key-value pairs
+        // This follows ComicInfo.xml best practices for custom metadata
+        let custom_fields_xml: String = if series_metadata.custom_fields.is_empty() {
+            String::new()
+        } else {
+            series_metadata
+                .custom_fields
+                .par_iter()
+                .map(|(key, value)| {
+                    // Escape XML characters in key and value to prevent XML parsing issues
+                    let escaped_key = escape_xml(key);
+                    let escaped_value = escape_xml(value);
+                    format!("    {}: {}", escaped_key, escaped_value)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         xml = xml.replace("%customfields%", &custom_fields_xml);
 
         // Chapter titles (can be added as a comment or custom tag)
-        let chapter_titles_str = collected_chapter_titles.join(", ");
+        let chapter_titles_str = escape_xml(&collected_chapter_titles.join(", "));
         xml = xml.replace("%chaptertitles%", &chapter_titles_str);
 
         let xml_bytes = spawn_blocking(move || xml.as_bytes().to_vec())

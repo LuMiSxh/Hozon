@@ -36,26 +36,50 @@ pub enum CollectionDepth {
     Shallow, // Expects structure: `source_path/page.jpg` (all pages in root, treated as one virtual chapter)
 }
 
-/// A specific finding from the analysis stage, categorized as positive, warning, or negative.
+/// A specific finding from the analysis phase, categorized by severity.
+/// Findings can be positive, warnings, non-blocking errors, or blocking fatals.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AnalyzeFinding {
-    Positive(String),
-    Warning(String),
-    Negative(String),
-    MissingNumericIdentifier(PathBuf),
-    UnsupportedImageFormat(PathBuf, String), // Path, extension
-    UnusualFileSize(PathBuf, u64, u64),      // Path, actual size, average size
-    LongPath(PathBuf, usize),                // Path, length
-    SpecialCharactersInPath(PathBuf),
-    PermissionDenied(PathBuf),
-    InconsistentPageCount(PathBuf, usize, usize), // Chapter path, actual count, average count
-    InconsistentImageFormat(Vec<String>),         // List of distinct formats found
-    EmptySourcePath,
-    SourcePathNotDirectory,
-    NoSubdirectoriesFound,
-    NoPagesFoundInSubdirectories,
+    // --- Positive Findings ---
+    ConsistentNamingFound {
+        count: usize,
+        pattern: String,
+    },
+    ConsistentImageFormat {
+        format: String,
+    },
+
+    // --- Warnings ---
+    InconsistentPageCount {
+        chapter_path: PathBuf,
+        expected: usize,
+        found: usize,
+    },
+    UnusualFileSize {
+        file_path: PathBuf,
+        size_kb: u64,
+        average_kb: u64,
+    },
+    SpecialCharactersInPath {
+        path: PathBuf,
+    },
+
+    // --- Errors (Non-blocking) ---
+    UnsupportedFileIgnored {
+        path: PathBuf,
+    },
+
+    // --- Fatals (Blocking) ---
+    SourcePathNotFound {
+        path: PathBuf,
+    },
+    PermissionDenied {
+        path: PathBuf,
+    },
+    NoChaptersFound,
+    NoPagesFound,
 }
 
 /// Defines the output file format for the generated ebook(s).
@@ -144,7 +168,6 @@ pub struct ConversionConfig {
 pub struct CollectedContent {
     pub chapters_with_pages: Vec<Vec<PathBuf>>, // Vec<Chapter: Vec<PagePath>>
     pub report: AnalyzeReport,                  // Report from the collection/analysis phase
-    pub grouping_strategy_recommended: VolumeGroupingStrategy, // What strategy `collect_content` recommended
 }
 
 /// Represents the outcome of the volume structuring (grouping) phase.
@@ -211,9 +234,12 @@ pub enum HozonExecutionMode {
 /// - PNG: image/png
 /// - WebP: image/webp
 pub fn get_file_info(image_path: &PathBuf) -> Result<(&'static str, &'static str)> {
-    let path = image_path.extension().and_then(|e| e.to_str());
+    let path = image_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase());
 
-    match path {
+    match path.as_deref() {
         Some("jpg") | Some("jpeg") => Ok(("jpg", "image/jpeg")),
         Some("png") => Ok(("png", "image/png")),
         Some("webp") => Ok(("webp", "image/webp")),

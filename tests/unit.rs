@@ -41,13 +41,13 @@ async fn test_hozon_config_builder_validation() -> Result<()> {
 
 #[tokio::test]
 async fn test_hozon_config_preflight_check() -> Result<()> {
-    let (_test_path, source_dir, target_dir) = setup_test_dirs("preflight_check").await;
+    let test_dirs = setup_test_dirs("preflight_check").await;
 
     // Valid for FromSource
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title("Test".to_string()))
-        .source_path(source_dir.clone())
-        .target_path(target_dir.clone())
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .build()?;
     assert!(
         config
@@ -58,7 +58,7 @@ async fn test_hozon_config_preflight_check() -> Result<()> {
     // Invalid for FromSource (missing source_path)
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title("Test".to_string()))
-        .target_path(target_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .build()?;
     let result = config.preflight_check(HozonExecutionMode::FromSource);
     assert!(result.is_err());
@@ -72,8 +72,8 @@ async fn test_hozon_config_preflight_check() -> Result<()> {
     // Invalid for FromSource (source_path does not exist)
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title("Test".to_string()))
-        .source_path(source_dir.join("nonexistent"))
-        .target_path(target_dir.clone())
+        .source_path(test_dirs.source_dir.join("nonexistent"))
+        .target_path(test_dirs.target_dir.clone())
         .build()?;
     let result = config.preflight_check(HozonExecutionMode::FromSource);
     assert!(result.is_err());
@@ -88,7 +88,8 @@ async fn test_hozon_config_preflight_check() -> Result<()> {
 
 #[tokio::test]
 async fn test_collector_regex_parser() -> Result<()> {
-    let (_test_path, source_dir, _target_dir) = setup_test_dirs("collector_regex").await;
+    let test_dirs = setup_test_dirs("collector_regex").await;
+    let source_dir = test_dirs.source_dir.clone();
     let default_collector = Collector::new(&source_dir, CollectionDepth::Deep, None, None, 75);
 
     // Default numeric regex
@@ -129,6 +130,7 @@ async fn test_collector_regex_parser() -> Result<()> {
     );
 
     // Custom regex
+    let source_dir = test_dirs.source_dir.clone();
     let custom_re = Regex::new(r"PAGE_(\d+)").unwrap();
     let custom_collector_page_re = Collector::new(
         &source_dir,
@@ -150,9 +152,9 @@ async fn test_collector_regex_parser() -> Result<()> {
 
 #[tokio::test]
 async fn test_collector_is_grayscale() -> Result<()> {
-    let (test_path, _source_dir, _target_dir) = setup_test_dirs("preflight_check").await;
-    let gray_path = test_path.join("gray.jpg");
-    let color_path = test_path.join("color.jpg");
+    let test_dirs = setup_test_dirs("preflight_check").await;
+    let gray_path = test_dirs.test_dir.join("gray.jpg");
+    let color_path = test_dirs.test_dir.join("color.jpg");
 
     create_dummy_grayscale_image(&gray_path).await?;
     create_dummy_color_image(&color_path).await?;
@@ -181,7 +183,7 @@ async fn test_collector_is_grayscale() -> Result<()> {
 
 #[tokio::test]
 async fn test_collector_collection_depth() -> Result<()> {
-    let (_test_path, source_dir, _target_dir) = setup_test_dirs("preflight_check").await;
+    let test_dirs = setup_test_dirs("preflight_check").await;
 
     // Setup:
     // tmp_dir/
@@ -193,15 +195,16 @@ async fn test_collector_collection_depth() -> Result<()> {
     //   flat_page_a.jpg
     //   flat_page_b.png
 
-    let chap1_dir = source_dir.join("chapter_1");
-    let chap2_dir = source_dir.join("chapter_2");
+    let chap1_dir = test_dirs.source_dir.join("chapter_1");
+    let chap2_dir = test_dirs.source_dir.join("chapter_2");
     create_dummy_color_image(&chap1_dir.join("page_001.jpg")).await?;
     create_dummy_color_image(&chap1_dir.join("page_002.png")).await?;
     create_dummy_color_image(&chap2_dir.join("page_001.jpg")).await?;
-    create_dummy_color_image(&source_dir.join("flat_page_a.jpg")).await?;
-    create_dummy_color_image(&source_dir.join("flat_page_b.png")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("flat_page_a.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("flat_page_b.png")).await?;
 
     // Test Deep collection
+    let source_dir = test_dirs.source_dir.clone();
     let deep_collector = Collector::new(&source_dir, CollectionDepth::Deep, None, None, 75);
     let chapters_deep = deep_collector
         .collect_chapters(None::<fn(&PathBuf, &PathBuf) -> Ordering>)
@@ -288,4 +291,249 @@ async fn test_ebook_metadata_default_with_title() {
     assert_eq!(metadata.title, "My Book");
     assert_eq!(metadata.language, "en"); // Default language
     assert!(metadata.authors.is_empty());
+}
+
+#[tokio::test]
+async fn test_collector_analysis_unsupported_files() -> Result<()> {
+    let test_dirs = setup_test_dirs("analysis_unsupported").await;
+
+    // Create a chapter with supported and unsupported files
+    let chapter_dir = test_dirs.source_dir.join("Chapter_1");
+    create_dummy_color_image(&chapter_dir.join("page_001.jpg")).await?;
+    create_dummy_color_image(&chapter_dir.join("page_002.png")).await?;
+
+    // Create an unsupported file (text file)
+    tokio::fs::write(chapter_dir.join("readme.txt"), "This is a text file").await?;
+
+    let source_dir = test_dirs.source_dir.clone();
+    let collector = Collector::new(&source_dir, CollectionDepth::Deep, None, None, 75);
+    let result = collector.analyze_source_content().await?;
+
+    // Check that unsupported file was flagged
+    let unsupported_findings: Vec<_> = result
+        .report
+        .findings
+        .iter()
+        .filter_map(|f| match f {
+            AnalyzeFinding::UnsupportedFileIgnored { path } => Some(path),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(unsupported_findings.len(), 1);
+    assert!(
+        unsupported_findings[0]
+            .to_str()
+            .unwrap()
+            .contains("readme.txt")
+    );
+
+    // Check that supported files were still collected
+    assert_eq!(result.chapters_with_pages.len(), 1);
+    assert_eq!(result.chapters_with_pages[0].len(), 2); // Only the 2 image files
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_collector_analysis_inconsistent_page_count() -> Result<()> {
+    let test_dirs = setup_test_dirs("analysis_inconsistent").await;
+
+    // Create chapters with very different page counts
+    let chapter1_dir = test_dirs.source_dir.join("Chapter_1");
+    let chapter2_dir = test_dirs.source_dir.join("Chapter_2");
+    let chapter3_dir = test_dirs.source_dir.join("Chapter_3");
+
+    // Chapter 1: 1 page
+    create_dummy_color_image(&chapter1_dir.join("page_001.jpg")).await?;
+
+    // Chapter 2: 10 pages (normal)
+    for i in 1..=10 {
+        create_dummy_color_image(&chapter2_dir.join(format!("page_{:03}.jpg", i))).await?;
+    }
+
+    // Chapter 3: 9 pages (normal, similar to chapter 2)
+    for i in 1..=9 {
+        create_dummy_color_image(&chapter3_dir.join(format!("page_{:03}.jpg", i))).await?;
+    }
+
+    let source_dir = test_dirs.source_dir.clone();
+    let collector = Collector::new(&source_dir, CollectionDepth::Deep, None, None, 75);
+    let result = collector.analyze_source_content().await?;
+
+    // Check that inconsistent page count was flagged for chapter 1
+    let inconsistent_findings: Vec<_> = result
+        .report
+        .findings
+        .iter()
+        .filter_map(|f| match f {
+            AnalyzeFinding::InconsistentPageCount {
+                chapter_path,
+                expected,
+                found,
+            } => Some((chapter_path, *expected, *found)),
+            _ => None,
+        })
+        .collect();
+
+    assert!(!inconsistent_findings.is_empty());
+    // Chapter 1 should be flagged as having inconsistent page count
+    let chapter1_flagged = inconsistent_findings
+        .iter()
+        .any(|(path, _expected, found)| {
+            path.to_str().unwrap().contains("Chapter_1") && *found == 1
+        });
+    assert!(chapter1_flagged);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_collector_analysis_special_characters() -> Result<()> {
+    let test_dirs = setup_test_dirs("analysis_special_chars").await;
+
+    let chapter_dir = test_dirs.source_dir.join("Chapter_1");
+
+    // Create files with special characters in names
+    create_dummy_color_image(&chapter_dir.join("page<001>.jpg")).await?;
+    create_dummy_color_image(&chapter_dir.join("page|002|.jpg")).await?;
+    create_dummy_color_image(&chapter_dir.join("normal_page.jpg")).await?;
+
+    let source_dir = test_dirs.source_dir.clone();
+    let collector = Collector::new(&source_dir, CollectionDepth::Deep, None, None, 75);
+    let result = collector.analyze_source_content().await?;
+
+    // Check that special characters were flagged
+    let special_char_findings: Vec<_> = result
+        .report
+        .findings
+        .iter()
+        .filter_map(|f| match f {
+            AnalyzeFinding::SpecialCharactersInPath { path } => Some(path),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(special_char_findings.len(), 2); // Two files with special chars
+    assert!(
+        special_char_findings
+            .iter()
+            .any(|p| p.to_str().unwrap().contains("<001>"))
+    );
+    assert!(
+        special_char_findings
+            .iter()
+            .any(|p| p.to_str().unwrap().contains("|002|"))
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_collector_analysis_file_permissions() -> Result<()> {
+    let test_dirs = setup_test_dirs("analysis_permissions").await;
+
+    let chapter_dir = test_dirs.source_dir.join("Chapter_1");
+
+    // Create a normal file
+    create_dummy_color_image(&chapter_dir.join("accessible.jpg")).await?;
+
+    let source_dir = test_dirs.source_dir.clone();
+    let collector = Collector::new(&source_dir, CollectionDepth::Deep, None, None, 75);
+    let result = collector.analyze_source_content().await?;
+
+    // In a normal test environment, we shouldn't have permission issues
+    // This test mainly verifies the analysis doesn't crash when checking permissions
+    let permission_findings: Vec<_> = result
+        .report
+        .findings
+        .iter()
+        .filter_map(|f| match f {
+            AnalyzeFinding::PermissionDenied { .. } => Some(f),
+            _ => None,
+        })
+        .collect();
+
+    // In normal test conditions, there should be no permission issues
+    assert!(permission_findings.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_collector_analysis_positive_findings() -> Result<()> {
+    let test_dirs = setup_test_dirs("analysis_positive").await;
+
+    // Create chapters with consistent naming pattern
+    let chapter1_dir = test_dirs.source_dir.join("01-001_First_Chapter");
+    let chapter2_dir = test_dirs.source_dir.join("01-002_Second_Chapter");
+
+    // Create consistent image format (all JPG)
+    create_dummy_color_image(&chapter1_dir.join("page_001.jpg")).await?;
+    create_dummy_color_image(&chapter1_dir.join("page_002.jpg")).await?;
+    create_dummy_color_image(&chapter2_dir.join("page_001.jpg")).await?;
+    create_dummy_color_image(&chapter2_dir.join("page_002.jpg")).await?;
+
+    let source_dir = test_dirs.source_dir.clone();
+    let collector = Collector::new(&source_dir, CollectionDepth::Deep, None, None, 75);
+    let result = collector.analyze_source_content().await?;
+
+    // Check for positive findings
+    let consistent_naming_found = result
+        .report
+        .findings
+        .iter()
+        .any(|f| matches!(f, AnalyzeFinding::ConsistentNamingFound { .. }));
+
+    assert!(
+        consistent_naming_found,
+        "Should detect consistent naming pattern"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_get_file_info_utility() -> Result<()> {
+    use hozon::types::get_file_info;
+    use std::path::PathBuf;
+
+    // Test supported formats
+    assert_eq!(
+        get_file_info(&PathBuf::from("test.jpg"))?,
+        ("jpg", "image/jpeg")
+    );
+    assert_eq!(
+        get_file_info(&PathBuf::from("test.jpeg"))?,
+        ("jpg", "image/jpeg")
+    );
+    assert_eq!(
+        get_file_info(&PathBuf::from("test.png"))?,
+        ("png", "image/png")
+    );
+    assert_eq!(
+        get_file_info(&PathBuf::from("test.webp"))?,
+        ("webp", "image/webp")
+    );
+
+    // Test case sensitivity
+    assert_eq!(
+        get_file_info(&PathBuf::from("test.JPG"))?,
+        ("jpg", "image/jpeg")
+    );
+    assert_eq!(
+        get_file_info(&PathBuf::from("test.PNG"))?,
+        ("png", "image/png")
+    );
+
+    // Test unsupported format
+    let result = get_file_info(&PathBuf::from("test.txt"));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Unsupported"));
+
+    // Test file without extension
+    let result = get_file_info(&PathBuf::from("test"));
+    assert!(result.is_err());
+
+    Ok(())
 }

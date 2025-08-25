@@ -16,18 +16,18 @@ use common::{
 
 #[tokio::test]
 async fn test_full_pipeline_default_deep_cbz() -> Result<()> {
-    let (_test_path, source_dir, target_dir) = setup_test_dirs("full_pipeline_default_cbz").await;
+    let test_dirs = setup_test_dirs("full_pipeline_default_cbz").await;
 
     // Setup: source/Chapter 1/page_001.jpg, source/Chapter 2/page_001.jpg
-    create_dummy_color_image(&source_dir.join("Chapter 1").join("001.jpg")).await?;
-    create_dummy_color_image(&source_dir.join("Chapter 2").join("001.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 1").join("001.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 2").join("001.jpg")).await?;
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title(
             "My Default Comic".to_string(),
         ))
-        .source_path(source_dir)
-        .target_path(target_dir.clone())
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .output_format(FileFormat::Cbz)
         .create_output_directory(true) // Should create target/My Default Comic/
         .build()?;
@@ -36,7 +36,7 @@ async fn test_full_pipeline_default_deep_cbz() -> Result<()> {
         .await
         .expect("Test timed out")?;
 
-    let expected_output_dir = target_dir.join("My Default Comic");
+    let expected_output_dir = test_dirs.target_dir.join("My Default Comic");
     assert!(expected_output_dir.exists());
 
     // Default strategy is Manual, which creates one volume by default.
@@ -52,14 +52,17 @@ async fn test_full_pipeline_default_deep_cbz() -> Result<()> {
 
 #[tokio::test]
 async fn test_flat_pages_workflow_epub() -> Result<()> {
-    let (_test_path, source_dir, target_dir) = setup_test_dirs("flat_pages_epub").await;
+    let test_dirs = setup_test_dirs("flat_pages_epub").await;
 
     // Setup: source_flat/001.jpg, 002.jpg
-    create_dummy_color_image(&source_dir.join("001.jpg")).await?;
-    create_dummy_color_image(&source_dir.join("002.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("001.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("002.jpg")).await?;
 
     // Manually collect the flat pages
-    let collected_data = vec![vec![source_dir.join("001.jpg"), source_dir.join("002.jpg")]];
+    let collected_data = vec![vec![
+        test_dirs.source_dir.join("001.jpg"),
+        test_dirs.source_dir.join("002.jpg"),
+    ]];
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata {
@@ -67,7 +70,7 @@ async fn test_flat_pages_workflow_epub() -> Result<()> {
             language: "ja".to_string(),
             ..Default::default()
         })
-        .target_path(target_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .output_format(FileFormat::Epub)
         .volume_grouping_strategy(VolumeGroupingStrategy::Flat)
         .build()?;
@@ -79,7 +82,7 @@ async fn test_flat_pages_workflow_epub() -> Result<()> {
     .await
     .expect("Test timed out")?;
 
-    let expected_output_dir = target_dir.join("Flat Pages Book");
+    let expected_output_dir = test_dirs.target_dir.join("Flat Pages Book");
     assert!(expected_output_dir.exists());
     let expected_epub_path = expected_output_dir.join("Flat Pages Book.epub");
     assert_valid_zip_file(&expected_epub_path).await;
@@ -88,22 +91,22 @@ async fn test_flat_pages_workflow_epub() -> Result<()> {
 
 #[tokio::test]
 async fn test_name_grouping_strategy_cbz() -> Result<()> {
-    let (_test_path, source_dir, target_dir) = setup_test_dirs("name_grouping_cbz").await;
+    let test_dirs = setup_test_dirs("name_grouping_cbz").await;
 
     // Setup:
     // source_names/01-001/img_001.jpg
     // source_names/01-002/img_001.jpg
     // source_names/02-001/img_001.jpg
-    create_dummy_color_image(&source_dir.join("01-001").join("img.jpg")).await?;
-    create_dummy_color_image(&source_dir.join("01-002").join("img.jpg")).await?;
-    create_dummy_color_image(&source_dir.join("02-001").join("img.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("01-001").join("img.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("01-002").join("img.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("02-001").join("img.jpg")).await?;
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title(
             "My Name Grouped Series".to_string(),
         ))
-        .source_path(source_dir)
-        .target_path(target_dir.clone())
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .output_format(FileFormat::Cbz)
         .volume_grouping_strategy(VolumeGroupingStrategy::Name)
         .build()?;
@@ -112,7 +115,7 @@ async fn test_name_grouping_strategy_cbz() -> Result<()> {
         .await
         .expect("Test timed out")?;
 
-    let expected_output_dir = target_dir.join("My Name Grouped Series");
+    let expected_output_dir = test_dirs.target_dir.join("My Name Grouped Series");
     assert!(expected_output_dir.exists());
 
     // Expecting 2 CBZ files
@@ -135,22 +138,24 @@ async fn test_name_grouping_strategy_cbz() -> Result<()> {
 
 #[tokio::test]
 async fn test_image_analysis_grouping_epub() -> Result<()> {
-    let (_test_path, source_dir, target_dir) = setup_test_dirs("image_analysis_epub").await;
+    let test_dirs = setup_test_dirs("image_analysis_epub").await;
 
     // Setup:
     //   001-Chapter_A/cover.jpg (grayscale)
     //   002-Chapter_B/cover.jpg (color, implies new volume)
     //   003-Chapter_C/cover.jpg (grayscale)
-    create_dummy_grayscale_image(&source_dir.join("001-Chapter_A").join("cover.jpg")).await?;
-    create_dummy_color_image(&source_dir.join("002-Chapter_B").join("cover.jpg")).await?;
-    create_dummy_grayscale_image(&source_dir.join("003-Chapter_C").join("cover.jpg")).await?;
+    create_dummy_grayscale_image(&test_dirs.source_dir.join("001-Chapter_A").join("cover.jpg"))
+        .await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("002-Chapter_B").join("cover.jpg")).await?;
+    create_dummy_grayscale_image(&test_dirs.source_dir.join("003-Chapter_C").join("cover.jpg"))
+        .await?;
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title(
             "Image Analysis Series".to_string(),
         ))
-        .source_path(source_dir)
-        .target_path(target_dir.clone())
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .output_format(FileFormat::Epub)
         .volume_grouping_strategy(VolumeGroupingStrategy::ImageAnalysis)
         .image_analysis_sensibility(90) // High sensibility means strict grayscale
@@ -160,7 +165,7 @@ async fn test_image_analysis_grouping_epub() -> Result<()> {
         .await
         .expect("Test timed out")?;
 
-    let expected_output_dir = target_dir.join("Image Analysis Series");
+    let expected_output_dir = test_dirs.target_dir.join("Image Analysis Series");
     assert!(expected_output_dir.exists());
 
     // Expected logic:
@@ -177,20 +182,25 @@ async fn test_image_analysis_grouping_epub() -> Result<()> {
 
 #[tokio::test]
 async fn test_manual_grouping_with_override_epub() -> Result<()> {
-    let (_test_path, source_dir, target_dir) =
-        setup_test_dirs("manual_grouping_override_epub").await;
+    let test_dirs = setup_test_dirs("manual_grouping_override_epub").await;
 
     // Setup: 4 chapters, each with one page
     for i in 1..=4 {
-        create_dummy_color_image(&source_dir.join(format!("Chapter_{}", i)).join("p1.jpg")).await?;
+        create_dummy_color_image(
+            &test_dirs
+                .source_dir
+                .join(format!("Chapter_{}", i))
+                .join("p1.jpg"),
+        )
+        .await?;
     }
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title(
             "Manual Grouping Book".to_string(),
         ))
-        .source_path(source_dir)
-        .target_path(target_dir.clone())
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .output_format(FileFormat::Epub)
         .volume_grouping_strategy(VolumeGroupingStrategy::Manual)
         .volume_sizes_override(vec![2, 2]) // Manual override: 2 volumes, 2 chapters each
@@ -200,7 +210,7 @@ async fn test_manual_grouping_with_override_epub() -> Result<()> {
         .await
         .expect("Test timed out")?;
 
-    let expected_output_dir = target_dir.join("Manual Grouping Book");
+    let expected_output_dir = test_dirs.target_dir.join("Manual Grouping Book");
     assert!(expected_output_dir.exists());
 
     let vol1_epub = expected_output_dir.join("Manual Grouping Book | Volume 1.epub");
@@ -212,9 +222,9 @@ async fn test_manual_grouping_with_override_epub() -> Result<()> {
 
 #[tokio::test]
 async fn test_metadata_propagation_and_custom_fields_cbz() -> Result<()> {
-    let (_test_path, source_dir, target_dir) = setup_test_dirs("metadata_cbz").await;
+    let test_dirs = setup_test_dirs("metadata_cbz").await;
 
-    create_dummy_color_image(&source_dir.join("Chapter 1").join("001.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 1").join("001.jpg")).await?;
 
     let mut custom_fields = HashMap::new();
     custom_fields.insert("CustomTag".to_string(), "Custom Value".to_string());
@@ -236,8 +246,8 @@ async fn test_metadata_propagation_and_custom_fields_cbz() -> Result<()> {
 
     let config = HozonConfig::builder()
         .metadata(metadata)
-        .source_path(source_dir)
-        .target_path(target_dir.clone())
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
         .output_format(FileFormat::Cbz)
         .build()?;
 
@@ -245,7 +255,7 @@ async fn test_metadata_propagation_and_custom_fields_cbz() -> Result<()> {
         .await
         .expect("Test timed out")?;
 
-    let expected_output_dir = target_dir.join("Metadata Test Comic");
+    let expected_output_dir = test_dirs.target_dir.join("Metadata Test Comic");
     let expected_cbz_path = expected_output_dir.join("Metadata Test Comic.cbz");
     assert_valid_zip_file(&expected_cbz_path).await;
 
@@ -264,19 +274,147 @@ async fn test_metadata_propagation_and_custom_fields_cbz() -> Result<()> {
     assert!(comic_info.contains("<Year>2025</Year>"));
     assert!(comic_info.contains("<Month>8</Month>"));
     assert!(comic_info.contains("<Day>23</Day>"));
-    assert!(comic_info.contains("<CustomTag>Custom Value</CustomTag>"));
+    assert!(comic_info.contains("CustomTag: Custom Value"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_metadata_xml_escaping_cbz() -> Result<()> {
+    let test_dirs = setup_test_dirs("xml_escaping_cbz").await;
+
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 1").join("001.jpg")).await?;
+
+    let mut custom_fields = HashMap::new();
+    custom_fields.insert(
+        "Tag<WithBrackets>".to_string(),
+        "Value & \"quoted\"".to_string(),
+    );
+    custom_fields.insert(
+        "Another'Tag".to_string(),
+        "<script>alert('xss')</script>".to_string(),
+    );
+
+    let metadata = EbookMetadata {
+        title: "XML Escaping Test".to_string(),
+        description: Some("Description with <html> & \"quotes\"".to_string()),
+        custom_fields,
+        ..Default::default()
+    };
+
+    let config = HozonConfig::builder()
+        .metadata(metadata)
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
+        .output_format(FileFormat::Cbz)
+        .build()?;
+
+    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
+        .await
+        .expect("Test timed out")?;
+
+    let expected_output_dir = test_dirs.target_dir.join("XML Escaping Test");
+    let expected_cbz_path = expected_output_dir.join("XML Escaping Test.cbz");
+    assert_valid_zip_file(&expected_cbz_path).await;
+
+    let comic_info = get_comic_info_xml(&expected_cbz_path).await;
+
+    // Verify XML escaping in description
+    assert!(
+        comic_info
+            .contains("<Summary>Description with &lt;html&gt; &amp; &quot;quotes&quot;</Summary>")
+    );
+
+    // Verify custom fields are properly escaped in Notes section
+    assert!(comic_info.contains("Tag&lt;WithBrackets&gt;: Value &amp; &quot;quoted&quot;"));
+    assert!(
+        comic_info
+            .contains("Another&apos;Tag: &lt;script&gt;alert(&apos;xss&apos;)&lt;/script&gt;")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_analyze_source_functionality() -> Result<()> {
+    let test_dirs = setup_test_dirs("analyze_source").await;
+
+    // Setup: Create chapters with different characteristics for analysis
+    let chapter1_dir = test_dirs.source_dir.join("01-001_Chapter_One");
+    let chapter2_dir = test_dirs.source_dir.join("01-002_Chapter_Two");
+    let chapter3_dir = test_dirs.source_dir.join("01-003_Chapter_Three");
+
+    // Chapter 1: 10 pages (normal)
+    for i in 1..=10 {
+        create_dummy_color_image(&chapter1_dir.join(format!("page_{:03}.jpg", i))).await?;
+    }
+
+    // Chapter 2: 9 pages (normal, similar to chapter 1)
+    for i in 1..=9 {
+        create_dummy_color_image(&chapter2_dir.join(format!("page_{:03}.jpg", i))).await?;
+    }
+
+    // Chapter 3: Only 1 page (significantly different) and special characters
+    create_dummy_color_image(&chapter3_dir.join("page<001>.jpg")).await?;
+
+    let config = HozonConfig::builder()
+        .metadata(EbookMetadata::default_with_title(
+            "Analysis Test".to_string(),
+        ))
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
+        .build()?;
+
+    // Test analyze_source method
+    let collected_content = timeout(LONG_TEST_TIMEOUT, config.analyze_source())
+        .await
+        .expect("Test timed out")?;
+
+    // Verify the analysis results
+    assert_eq!(collected_content.chapters_with_pages.len(), 3);
+    assert!(!collected_content.report.findings.is_empty());
+
+    // Check that consistent naming was detected
+    let has_consistent_naming = collected_content
+        .report
+        .findings
+        .iter()
+        .any(|f| matches!(f, AnalyzeFinding::ConsistentNamingFound { .. }));
+    assert!(has_consistent_naming);
+
+    // Check that special characters were detected
+    let has_special_chars = collected_content
+        .report
+        .findings
+        .iter()
+        .any(|f| matches!(f, AnalyzeFinding::SpecialCharactersInPath { .. }));
+    assert!(has_special_chars);
+
+    // Check that inconsistent page count was detected
+    let has_inconsistent_pages = collected_content
+        .report
+        .findings
+        .iter()
+        .any(|f| matches!(f, AnalyzeFinding::InconsistentPageCount { .. }));
+    assert!(has_inconsistent_pages);
+
+    // Verify recommended strategy is set
+    assert_ne!(
+        collected_content.report.recommended_strategy,
+        VolumeGroupingStrategy::Manual
+    );
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_error_on_non_existent_source() -> Result<()> {
-    let (test_path, _source_dir, target_dir) = setup_test_dirs("error_no_source").await;
-    let non_existent_source = test_path.join("non_existent_source");
+    let test_dirs = setup_test_dirs("error_no_source").await;
+    let non_existent_source = test_dirs.test_dir.join("non_existent_source");
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title("Error Test".to_string()))
         .source_path(non_existent_source)
-        .target_path(target_dir)
+        .target_path(test_dirs.target_dir.clone())
         .build()?;
 
     let result = config.convert_from_source().await;
@@ -290,11 +428,11 @@ async fn test_error_on_non_existent_source() -> Result<()> {
 
 #[tokio::test]
 async fn test_error_on_empty_collected_data() -> Result<()> {
-    let (_test_path, _source_dir, target_dir) = setup_test_dirs("error_empty_collected").await;
+    let test_dirs = setup_test_dirs("error_empty_collected").await;
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title("Error Test".to_string()))
-        .target_path(target_dir)
+        .target_path(test_dirs.target_dir.clone())
         .build()?;
 
     let collected_data: Vec<Vec<PathBuf>> = Vec::new();
@@ -311,11 +449,11 @@ async fn test_error_on_empty_collected_data() -> Result<()> {
 
 #[tokio::test]
 async fn test_error_on_empty_structured_data() -> Result<()> {
-    let (_test_path, _source_dir, target_dir) = setup_test_dirs("error_empty_structured").await;
+    let test_dirs = setup_test_dirs("error_empty_structured").await;
 
     let config = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title("Error Test".to_string()))
-        .target_path(target_dir)
+        .target_path(test_dirs.target_dir.clone())
         .build()?;
 
     let structured_data: Vec<Vec<Vec<PathBuf>>> = Vec::new();

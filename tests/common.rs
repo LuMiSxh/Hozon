@@ -17,11 +17,41 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 #[allow(dead_code)]
 pub const LONG_TEST_TIMEOUT: Duration = Duration::from_secs(120); // For full conversions if they are slow
 
+/// A test directory structure that automatically cleans up when dropped.
+/// Contains the base test directory, source directory, and target directory paths.
+#[allow(dead_code)]
+pub struct TestDirs {
+    pub test_dir: PathBuf,
+    pub source_dir: PathBuf,
+    pub target_dir: PathBuf,
+}
+
+impl TestDirs {
+    /// Create a new TestDirs instance with the given paths
+    fn new(test_dir: PathBuf, source_dir: PathBuf, target_dir: PathBuf) -> Self {
+        Self {
+            test_dir,
+            source_dir,
+            target_dir,
+        }
+    }
+}
+
+impl Drop for TestDirs {
+    /// Automatically clean up the test directory when the TestDirs goes out of scope
+    fn drop(&mut self) {
+        if self.test_dir.exists() {
+            // Use std::fs for synchronous cleanup in Drop
+            let _ = std::fs::remove_dir_all(&self.test_dir);
+        }
+    }
+}
+
 /// Helper function to create a clean test directory with source and target subdirectories.
 /// Ensures the base directory is empty before a test runs.
-/// Returns the base test path, the source path, and the target path.
+/// Returns a TestDirs struct that automatically cleans up when dropped.
 #[allow(dead_code)]
-pub async fn setup_test_dirs(sub_path: &str) -> (PathBuf, PathBuf, PathBuf) {
+pub async fn setup_test_dirs(sub_path: &str) -> TestDirs {
     let rand_string: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(8)
@@ -38,7 +68,7 @@ pub async fn setup_test_dirs(sub_path: &str) -> (PathBuf, PathBuf, PathBuf) {
     fs::create_dir_all(&source_dir).await.unwrap();
     fs::create_dir_all(&target_dir).await.unwrap();
 
-    (test_dir, source_dir, target_dir)
+    TestDirs::new(test_dir, source_dir, target_dir)
 }
 
 /// Helper function to clean up the entire test temporary directory.

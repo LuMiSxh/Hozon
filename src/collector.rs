@@ -21,6 +21,7 @@ use tokio::task::{JoinHandle, spawn_blocking};
 
 use crate::error::{Error, Result};
 use crate::types::CollectionDepth;
+use crate::{AnalyzeFinding, AnalyzeReport, CollectedContent, VolumeGroupingStrategy};
 
 /// Limits the number of concurrent directory operations
 const MAX_CONCURRENT_DIRS: usize = 64;
@@ -271,6 +272,180 @@ impl<'a> Collector<'a> {
         Ok(volume_chapters)
     }
 
+    /// Collects and analyzes the source content, producing a detailed report.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<CollectedContent>` - The collected chapters and pages along with an analysis
+    pub async fn analyze_source_content(&self) -> Result<CollectedContent> {
+        let mut findings = Vec::new();
+
+        // 1. Collect chapters and pages
+        let chapters = self
+            .collect_chapters(None::<fn(&PathBuf, &PathBuf) -> Ordering>)
+            .await?;
+        if chapters.is_empty() {
+            findings.push(AnalyzeFinding::NoChaptersFound);
+            return Ok(CollectedContent {
+                chapters_with_pages: Vec::new(),
+                report: AnalyzeReport {
+                    findings,
+                    ..Default::default()
+                },
+            });
+        }
+        let pages_per_chapter = self.collect_pages(chapters.clone(), None).await?;
+        if pages_per_chapter.par_iter().all(Vec::is_empty) {
+            findings.push(AnalyzeFinding::NoPagesFound);
+            return Ok(CollectedContent {
+                chapters_with_pages: pages_per_chapter,
+                report: AnalyzeReport {
+                    findings,
+                    ..Default::default()
+                },
+            });
+        }
+
+        // 2. Perform various checks and populate findings
+
+        // Example Check: Naming conventions and strategy recommendation
+        let has_name_pattern = chapters.iter().any(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map_or(false, |s| DEFAULT_NAME_GROUPING_REGEX.is_match(s))
+        });
+
+        let recommended_strategy = if has_name_pattern {
+            findings.push(AnalyzeFinding::ConsistentNamingFound {
+                count: chapters.len(),
+                pattern: "Volume-Chapter".to_string(),
+            });
+            VolumeGroupingStrategy::Name
+        } else {
+            // Default fallback if naming is not consistent
+            VolumeGroupingStrategy::ImageAnalysis
+        };
+
+        // Additional analysis checks
+
+        // Check for unsupported file types by comparing raw directory contents with collected pages
+        for (chapter_idx, chapter_pages) in pages_per_chapter.iter().enumerate() {
+            if chapter_idx < chapters.len() {
+                // Get all files in this chapter directory (without filtering)
+                if let Ok(all_files) = Self::collect_all_files(&chapters[chapter_idx]).await {
+                    // Find files that were in the directory but not collected (i.e., unsupported)
+                    for file_path in &all_files {
+                        if !chapter_pages.contains(file_path) {
+                            if let Err(_) = crate::types::get_file_info(file_path) {
+                                findings.push(AnalyzeFinding::UnsupportedFileIgnored {
+                                    path: file_path.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check for page count consistency
+        if pages_per_chapter.len() > 1 {
+            let page_counts: Vec<usize> = pages_per_chapter
+                .iter()
+                .map(|chapter| chapter.len())
+                .collect();
+            let avg_page_count =
+                page_counts.iter().sum::<usize>() as f64 / page_counts.len() as f64;
+            let threshold = (avg_page_count * 0.3).max(1.0); // 30% deviation threshold
+
+            for (chapter_idx, &count) in page_counts.iter().enumerate() {
+                let deviation = (count as f64 - avg_page_count).abs();
+                if deviation > threshold {
+                    findings.push(AnalyzeFinding::InconsistentPageCount {
+                        chapter_path: chapters[chapter_idx].clone(),
+                        expected: avg_page_count.round() as usize,
+                        found: count,
+                    });
+                }
+            }
+        }
+
+        // Check for file permissions by attempting to read metadata
+        for chapter_pages in &pages_per_chapter {
+            for page_path in chapter_pages {
+                if let Err(e) = std::fs::metadata(page_path) {
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        findings.push(AnalyzeFinding::PermissionDenied {
+                            path: page_path.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for special characters in paths that might cause issues
+        for chapter_pages in &pages_per_chapter {
+            for page_path in chapter_pages {
+                if let Some(path_str) = page_path.to_str() {
+                    // Check for problematic characters that might cause issues in zip files or file systems
+                    if path_str
+                        .chars()
+                        .any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+                    {
+                        findings.push(AnalyzeFinding::SpecialCharactersInPath {
+                            path: page_path.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for unusual file sizes
+        if pages_per_chapter.len() > 0 {
+            let mut all_sizes: Vec<u64> = Vec::new();
+            for chapter_pages in &pages_per_chapter {
+                for page_path in chapter_pages {
+                    if let Ok(metadata) = std::fs::metadata(page_path) {
+                        all_sizes.push(metadata.len());
+                    }
+                }
+            }
+
+            if !all_sizes.is_empty() {
+                let avg_size = all_sizes.iter().sum::<u64>() / all_sizes.len() as u64;
+                let avg_size_kb = avg_size / 1024;
+
+                for chapter_pages in &pages_per_chapter {
+                    for page_path in chapter_pages {
+                        if let Ok(metadata) = std::fs::metadata(page_path) {
+                            let size_kb = metadata.len() / 1024;
+                            // Flag files that are significantly larger or smaller than average
+                            if size_kb > avg_size_kb * 3
+                                || (avg_size_kb > 10 && size_kb < avg_size_kb / 3)
+                            {
+                                findings.push(AnalyzeFinding::UnusualFileSize {
+                                    file_path: page_path.clone(),
+                                    size_kb,
+                                    average_kb: avg_size_kb,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Assemble and return the final structure
+        let report = AnalyzeReport {
+            findings,
+            recommended_strategy,
+        };
+
+        Ok(CollectedContent {
+            chapters_with_pages: pages_per_chapter,
+            report,
+        })
+    }
+
     // Helper methods
 
     /// Determines whether an image is predominantly grayscale
@@ -379,7 +554,48 @@ impl<'a> Collector<'a> {
                 continue; // Just skip, don't return an error for mixed content
             }
 
+            // For files (when only_dirs is false), also filter by supported image formats
+            if !only_dirs && !is_dir {
+                if let Err(_) = crate::types::get_file_info(&path) {
+                    continue; // Skip unsupported file formats
+                }
+            }
+
             entries.push(path);
+        }
+
+        Ok(entries)
+    }
+
+    /// Collects all files in a directory without any filtering (used for analysis)
+    ///
+    /// # Arguments
+    ///
+    /// * `directory` - Directory to scan
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Vec<PathBuf>>` - All non-hidden files in the directory
+    pub async fn collect_all_files(directory: &PathBuf) -> Result<Vec<PathBuf>> {
+        let mut entries: Vec<PathBuf> = Vec::new();
+
+        // Read directory contents
+        let mut paths: ReadDir = read_dir(directory).await.map_err(|e| Error::Io(e))?;
+
+        while let Some(entry) = paths.next_entry().await.map_err(|e| Error::Io(e))? {
+            let path = entry.path();
+
+            // Skip hidden files
+            if let Some(file_name) = path.file_name() {
+                if file_name.to_string_lossy().starts_with('.') {
+                    continue;
+                }
+            }
+
+            // Only include files, not directories
+            if !path.is_dir() {
+                entries.push(path);
+            }
         }
 
         Ok(entries)

@@ -11,63 +11,178 @@ use crate::collector::{Collector, DEFAULT_NAME_GROUPING_REGEX};
 use crate::error::{Error, Result};
 use crate::generator::{Generator, cbz::Cbz, epub::EPub};
 use crate::types::{
-    AnalyzeReport, CollectedContent, CollectionDepth, Direction, EbookMetadata, FileFormat,
-    HozonExecutionMode, StructuredContent, VolumeGroupingStrategy, VolumeStructureReport,
+    CollectedContent, CollectionDepth, Direction, EbookMetadata, FileFormat, HozonExecutionMode,
+    StructuredContent, VolumeGroupingStrategy, VolumeStructureReport,
 };
 
-/// The main Hozon conversion configuration, built declaratively.
-/// Once configured, it can execute the conversion process using various
-/// entry points (`convert_from_source`, `convert_from_collected_data`, etc.).
+/// The main Hozon conversion configuration, built declaratively using the builder pattern.
+///
+/// This struct encapsulates all settings needed for image-to-ebook conversion, including
+/// source and target paths, metadata, formatting options, and advanced analysis settings.
+/// Once configured, it can execute the conversion process using various entry points:
+///
+/// - [`convert_from_source`](HozonConfig::convert_from_source): Full pipeline from directory scanning
+/// - [`convert_from_collected_data`](HozonConfig::convert_from_collected_data): From pre-collected chapter/page data
+/// - [`convert_from_structured_data`](HozonConfig::convert_from_structured_data): From pre-structured volume data
+/// - [`analyze_source`](HozonConfig::analyze_source): Analysis only, no conversion
+///
+/// ## Builder Pattern
+///
+/// Use [`HozonConfig::builder()`](HozonConfig::builder) to create a new configuration:
+///
+/// ```rust,no_run
+/// # use hozon::prelude::*;
+/// # use std::path::PathBuf;
+/// let config = HozonConfig::builder()
+///     .metadata(EbookMetadata::default_with_title("My Book".to_string()))
+///     .source_path(PathBuf::from("./source"))
+///     .target_path(PathBuf::from("./output"))
+///     .output_format(FileFormat::Cbz)
+///     .build()
+///     .expect("Invalid configuration");
+/// ```
 #[derive(Clone, derive_builder::Builder)]
 #[builder(setter(into, strip_option), build_fn(validate = "Self::validate"))]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HozonConfig {
     // --- Core Conversion Settings ---
+    /// Complete ebook metadata including title, authors, description, and custom fields.
+    ///
+    /// This metadata will be embedded in the generated ebook files and used for
+    /// ComicInfo.xml (CBZ) or EPUB metadata. Use [`EbookMetadata::default_with_title`]
+    /// for quick setup with just a title.
     #[builder(default = "EbookMetadata::default_with_title(\"Untitled Conversion\".to_string())")]
     pub metadata: EbookMetadata,
+
+    /// Source directory path containing image files to convert.
+    ///
+    /// Required for [`convert_from_source`](HozonConfig::convert_from_source) and
+    /// [`analyze_source`](HozonConfig::analyze_source) methods. The directory structure
+    /// depends on the [`collection_depth`](HozonConfig::collection_depth) setting.
     #[builder(default)]
-    pub source_path: PathBuf, // Base path for collection, even if data is injected
-    pub target_path: PathBuf, // Output directory
+    pub source_path: PathBuf,
+
+    /// Target directory where generated ebook files will be saved.
+    ///
+    /// If [`create_output_directory`](HozonConfig::create_output_directory) is true,
+    /// a subdirectory named after the ebook title will be created here.
+    pub target_path: PathBuf,
+
+    /// Output file format for generated ebooks.
+    ///
+    /// - [`FileFormat::Cbz`]: Comic Book Archive (ZIP-based) with ComicInfo.xml metadata
+    /// - [`FileFormat::Epub`]: EPUB format with full metadata and reading direction support
     #[builder(default = "FileFormat::Cbz")]
     pub output_format: FileFormat,
+
+    /// Reading direction for EPUB files.
+    ///
+    /// - [`Direction::Ltr`]: Left-to-right reading (Western style)
+    /// - [`Direction::Rtl`]: Right-to-left reading (manga/Arabic style)
+    ///
+    /// This setting only affects EPUB output and is ignored for CBZ files.
     #[builder(default = "Direction::Ltr")]
     pub reading_direction: Direction,
+
+    /// Whether to create a subdirectory in the target path named after the ebook title.
+    ///
+    /// If `true`, output files will be saved to `target_path/ebook_title/`.
+    /// If `false`, output files will be saved directly to `target_path/`.
     #[builder(default = "true")]
     pub create_output_directory: bool,
+
+    /// Directory scanning depth for collecting chapters and pages.
+    ///
+    /// - [`CollectionDepth::Deep`]: Expects `source/chapter/page.jpg` structure
+    /// - [`CollectionDepth::Shallow`]: Expects `source/page.jpg` structure (single chapter)
     #[builder(default = "CollectionDepth::Deep")]
     pub collection_depth: CollectionDepth,
-    #[builder(default = "75")] // 0-100%
+
+    /// Sensitivity for image-based analysis (0-100%).
+    ///
+    /// Higher values mean stricter requirements for detecting grayscale "cover" pages
+    /// when using [`VolumeGroupingStrategy::ImageAnalysis`]. A value of 90 means 90%
+    /// of pixels must be grayscale for a page to be considered a volume break.
+    #[builder(default = "75")]
     pub image_analysis_sensibility: u8,
 
     // --- Customization for Collection & Structuring Logic ---
+    /// Strategy for grouping chapters into logical volumes.
+    ///
+    /// - [`VolumeGroupingStrategy::Name`]: Groups by chapter name patterns (e.g., "Vol1-Ch01")
+    /// - [`VolumeGroupingStrategy::ImageAnalysis`]: Detects volume breaks using cover page analysis
+    /// - [`VolumeGroupingStrategy::Manual`]: Uses explicit sizes or single volume
+    /// - [`VolumeGroupingStrategy::Flat`]: All pages in one chapter, one volume
     #[builder(default = "VolumeGroupingStrategy::Manual")]
     pub volume_grouping_strategy: VolumeGroupingStrategy,
-    #[builder(default)]
-    pub chapter_name_regex_str: Option<String>, // User-provided string, compiled in build()
-    #[builder(default)]
-    pub page_name_regex_str: Option<String>, // User-provided string, compiled in build()
-    #[builder(default)]
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub custom_chapter_path_sorter:
-        Option<Arc<dyn Fn(&PathBuf, &PathBuf) -> Ordering + Send + Sync>>,
-    #[builder(default)]
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub custom_page_path_sorter: Option<Arc<dyn Fn(&PathBuf, &PathBuf) -> Ordering + Send + Sync>>,
-    #[builder(default)]
-    pub volume_sizes_override: Option<Vec<usize>>, // For Manual grouping strategy
 
-    // --- Internal fields populated by build() after string regexes are compiled ---
+    /// Custom regex pattern for extracting chapter numbers from directory names.
+    ///
+    /// If not provided, uses the default pattern that matches common numbering schemes
+    /// like "Chapter 01", "Ch_001", "01-Chapter Title", etc.
+    ///
+    /// Example: `r"Chapter\s*(\d+(?:\.\d+)?)"` to match "Chapter 1", "Chapter 2.5"
+    #[builder(default)]
+    pub chapter_name_regex_str: Option<String>,
+
+    /// Custom regex pattern for extracting page numbers from file names.
+    ///
+    /// If not provided, uses the default pattern that matches common numbering schemes
+    /// like "001.jpg", "page_001.png", "p01.webp", etc.
+    ///
+    /// Example: `r"page[\s_-]*(\d+(?:\.\d+)?)"` to match "page_001", "page-01"
+    #[builder(default)]
+    pub page_name_regex_str: Option<String>,
+
+    /// Custom sorting function for chapter directories.
+    ///
+    /// Provides full control over chapter ordering. If not provided, uses the default
+    /// numeric sorting based on extracted numbers from directory names.
+    ///
+    /// The function receives two `PathBuf` references and returns a [`std::cmp::Ordering`].
+    #[builder(default)]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "specta", specta(skip))]
+    pub custom_chapter_path_sorter:
+        Option<Arc<dyn Fn(&PathBuf, &PathBuf) -> Ordering + Sync + Send + 'static>>,
+
+    /// Custom sorting function for page files within chapters.
+    ///
+    /// Provides full control over page ordering within each chapter. If not provided,
+    /// uses the default numeric sorting based on extracted numbers from file names.
+    ///
+    /// The function receives two `PathBuf` references and returns a [`std::cmp::Ordering`].
+    #[builder(default)]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "specta", specta(skip))]
+    pub custom_page_path_sorter:
+        Option<Arc<dyn Fn(&PathBuf, &PathBuf) -> Ordering + Sync + Send + 'static>>,
+
+    /// Explicit volume sizes for [`VolumeGroupingStrategy::Manual`].
+    ///
+    /// Specifies how many chapters should be in each volume. For example, `vec![10, 8, 5]`
+    /// creates 3 volumes with 10, 8, and 5 chapters respectively. If empty or the total
+    /// is less than available chapters, remaining chapters go into a single volume.
+    ///
+    /// Only used when `volume_grouping_strategy` is [`VolumeGroupingStrategy::Manual`].
+    #[builder(default)]
+    pub volume_sizes_override: Vec<usize>,
+
+    // --- Internal Fields (Auto-Generated, Hidden from Builder) ---
+    // Note: These are compiled from the above regex strings in the builder's validate() method.
+    /// Compiled regex from `chapter_name_regex_str`. Internal use only.
     #[builder(setter(skip), default)]
     #[cfg_attr(feature = "serde", serde(skip))]
     #[cfg_attr(feature = "specta", specta(skip))]
     pub(crate) compiled_chapter_name_regex: Option<Regex>,
+
+    /// Compiled regex from `page_name_regex_str`. Internal use only.
     #[builder(setter(skip), default)]
     #[cfg_attr(feature = "serde", serde(skip))]
     #[cfg_attr(feature = "specta", specta(skip))]
     pub(crate) compiled_page_name_regex: Option<Regex>,
 }
-
 impl std::fmt::Debug for HozonConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HozonConfig")
@@ -108,23 +223,60 @@ impl std::fmt::Debug for HozonConfig {
 }
 
 impl HozonConfig {
-    /// Returns a new builder for configuring `HozonConfig`.
+    /// Creates a new builder for configuring `HozonConfig`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use hozon::prelude::*;
+    /// # use std::path::PathBuf;
+    /// let config = HozonConfig::builder()
+    ///     .metadata(EbookMetadata::default_with_title("My Book".to_string()))
+    ///     .source_path(PathBuf::from("./source"))
+    ///     .target_path(PathBuf::from("./output"))
+    ///     .build()
+    ///     .expect("Invalid configuration");
+    /// ```
     pub fn builder() -> HozonConfigBuilder {
         HozonConfigBuilder::default()
     }
 
-    /// Performs non-content-loading, pre-flight checks on the configuration
-    /// based on the intended execution mode. This method is optional to call
-    /// for the user, as comprehensive checks are run internally by `convert_from_*` methods.
+    /// Performs validation checks on the configuration for a specific execution mode.
     ///
-    /// This allows for early validation of the configuration setup.
+    /// This method validates the configuration without performing any file operations or content loading.
+    /// It's useful for early validation before starting conversion operations. All `convert_from_*` methods
+    /// call this automatically, so manual invocation is optional but recommended for early error detection.
     ///
     /// # Arguments
-    /// * `mode` - Specifies the expected starting point of the conversion, influencing checks.
+    ///
+    /// * `mode` - The intended execution mode, which determines which validation checks are performed:
+    ///   - [`HozonExecutionMode::FromSource`]: Validates `source_path` existence and accessibility
+    ///   - [`HozonExecutionMode::FromCollectedData`]: Validates target path settings
+    ///   - [`HozonExecutionMode::FromStructuredData`]: Validates target path and metadata
     ///
     /// # Returns
-    /// A `Result` indicating success or an error if the configuration is invalid
-    /// for the given execution mode. On success, it returns a reference to `Self` for chaining.
+    ///
+    /// * `Ok(&self)` - Configuration is valid for the specified mode
+    /// * `Err(Error)` - Configuration has validation errors
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use hozon::prelude::*;
+    /// # use std::path::PathBuf;
+    /// # fn main() -> hozon::error::Result<()> {
+    /// let config = HozonConfig::builder()
+    ///     .metadata(EbookMetadata::default_with_title("Test".to_string()))
+    ///     .source_path(PathBuf::from("./source"))
+    ///     .target_path(PathBuf::from("./output"))
+    ///     .build()?;
+    ///
+    /// // Validate before conversion
+    /// config.preflight_check(HozonExecutionMode::FromSource)?;
+    /// println!("Configuration is valid!");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn preflight_check(&self, mode: HozonExecutionMode) -> Result<&Self> {
         // --- Basic config validation (redundant with Builder::build, but good as a sanity check) ---
         if self.metadata.title.is_empty() {
@@ -176,11 +328,11 @@ impl HozonConfig {
     // --- Core conversion entry points ---
 
     /// Starts the conversion by collecting chapters and pages from `source_path`.
-    /// This method performs the full pipeline: collection -> structuring -> generation.
+    /// This method performs the full pipeline: analysis -> structuring -> generation.
     pub async fn convert_from_source(self) -> Result<()> {
         self.preflight_check(HozonExecutionMode::FromSource)?;
 
-        // 1. Collect Content
+        // 1. Create a collector and run the full analysis.
         let collector = Collector::new(
             &self.source_path,
             self.collection_depth,
@@ -189,45 +341,99 @@ impl HozonConfig {
             self.image_analysis_sensibility,
         );
 
-        let chapters = collector
-            .collect_chapters(self.custom_chapter_path_sorter.as_deref())
-            .await?;
-        if chapters.is_empty() {
+        let collected_content = collector.analyze_source_content().await?;
+
+        // Extract the collected page data from the analysis result.
+        let pages_to_convert = collected_content.chapters_with_pages;
+
+        if pages_to_convert.par_iter().all(Vec::is_empty) {
             return Err(Error::NotFound(format!(
-                "No chapters found in source path: {:?}",
-                self.source_path
-            )));
-        }
-        let page_sorter = self.custom_page_path_sorter.clone();
-        let collected_chapters_pages_data = collector.collect_pages(chapters, page_sorter).await?;
-        if collected_chapters_pages_data.iter().all(|c| c.is_empty()) {
-            return Err(Error::NotFound(format!(
-                "No pages found in collected chapters from source path: {:?}",
+                "No pages found in source path: {:?}",
                 self.source_path
             )));
         }
 
-        let collected_content = CollectedContent {
-            chapters_with_pages: collected_chapters_pages_data,
-            report: AnalyzeReport::default(), // No analysis report if analyze() is removed, or a minimal one
-            grouping_strategy_recommended: self.volume_grouping_strategy, // Use configured strategy
-        };
-
-        // 2. Structure Volumes
-        let structured_content =
-            Self::perform_structuring(&self, collected_content.chapters_with_pages).await?;
-
-        // 3. Generate Ebooks
-        Self::perform_generation(
-            &self,
-            structured_content.volumes_with_chapters_and_pages,
-            None,
-        )
-        .await
+        // 2. Delegate the rest of the process (structuring and generation)
+        //    to the `convert_from_collected_data` method
+        self.convert_from_collected_data(pages_to_convert).await
     }
 
-    /// Starts the conversion with user-provided collected chapters and pages.
-    /// This method performs: structuring -> generation.
+    /// Analyzes the source directory based on the current configuration.
+    /// This method collects all content and runs a series of checks,
+    /// returning a detailed report without performing a conversion.
+    pub async fn analyze_source(self) -> Result<CollectedContent> {
+        self.preflight_check(HozonExecutionMode::FromSource)?;
+
+        let collector = Collector::new(
+            &self.source_path,
+            self.collection_depth,
+            self.compiled_chapter_name_regex.as_ref(),
+            self.compiled_page_name_regex.as_ref(),
+            self.image_analysis_sensibility,
+        );
+
+        collector.analyze_source_content().await
+    }
+
+    /// Executes conversion using pre-collected chapter and page data.
+    ///
+    /// This method bypasses the collection and analysis phases, starting directly with
+    /// user-provided chapter and page paths. It performs:
+    /// 1. **Validation**: Ensures the provided data is valid and accessible
+    /// 2. **Structuring**: Groups chapters into logical volumes based on the configured strategy
+    /// 3. **Generation**: Creates the final ebook files
+    ///
+    /// This is useful when you want to:
+    /// - Convert a subset of chapters from a larger collection
+    /// - Apply custom chapter selection or filtering logic
+    /// - Work with non-standard directory structures
+    /// - Integrate with external content management systems
+    ///
+    /// # Arguments
+    ///
+    /// * `collected_data` - Vector of chapters, where each chapter is a vector of page file paths.
+    ///   For example: `vec![vec![page1.jpg, page2.jpg], vec![page3.jpg, page4.jpg]]`
+    ///   represents 2 chapters with 2 pages each.
+    ///
+    /// # Requirements
+    ///
+    /// - `target_path` must be set to a valid output location
+    /// - All provided file paths must exist and be readable
+    /// - At least one chapter with one page must be provided
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Conversion completed successfully
+    /// * `Err(Error)` - Conversion failed due to validation, I/O, or processing errors
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use hozon::prelude::*;
+    /// # use std::path::PathBuf;
+    /// # #[tokio::main]
+    /// # async fn main() -> hozon::error::Result<()> {
+    /// let collected_data = vec![
+    ///     vec![
+    ///         PathBuf::from("./images/chapter1/page1.jpg"),
+    ///         PathBuf::from("./images/chapter1/page2.jpg"),
+    ///     ],
+    ///     vec![
+    ///         PathBuf::from("./images/chapter2/page1.jpg"),
+    ///         PathBuf::from("./images/chapter2/page2.jpg"),
+    ///     ],
+    /// ];
+    ///
+    /// let config = HozonConfig::builder()
+    ///     .metadata(EbookMetadata::default_with_title("Custom Collection".to_string()))
+    ///     .target_path(PathBuf::from("./output"))
+    ///     .volume_grouping_strategy(VolumeGroupingStrategy::Manual)
+    ///     .build()?;
+    ///
+    /// config.convert_from_collected_data(collected_data).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn convert_from_collected_data(
         self,
         collected_data: Vec<Vec<PathBuf>>,
@@ -254,8 +460,76 @@ impl HozonConfig {
         .await
     }
 
-    /// Starts the conversion with user-provided fully structured volumes.
-    /// This method performs only: generation.
+    /// Executes conversion using pre-structured volume data.
+    ///
+    /// This method bypasses both the collection/analysis and structuring phases, starting
+    /// directly with fully organized volume data. It performs only the generation phase,
+    /// creating ebook files from the provided volume structure.
+    ///
+    /// This is the most direct conversion method, useful when you have:
+    /// - Already organized content into logical volumes
+    /// - Complex custom volume organization logic
+    /// - External volume structuring systems
+    /// - Need for maximum control over the final volume organization
+    ///
+    /// # Arguments
+    ///
+    /// * `structured_data` - Vector of volumes, where each volume contains chapters,
+    ///   and each chapter contains page file paths. For example:
+    ///   ```text
+    ///   vec![
+    ///       // Volume 1
+    ///       vec![
+    ///           vec![page1.jpg, page2.jpg], // Chapter 1
+    ///           vec![page3.jpg, page4.jpg], // Chapter 2
+    ///       ],
+    ///       // Volume 2
+    ///       vec![
+    ///           vec![page5.jpg, page6.jpg], // Chapter 3
+    ///       ],
+    ///   ]
+    ///   ```
+    ///
+    /// # Requirements
+    ///
+    /// - `target_path` must be set to a valid output location
+    /// - All provided file paths must exist and be readable
+    /// - At least one volume with one chapter with one page must be provided
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Conversion completed successfully
+    /// * `Err(Error)` - Conversion failed due to validation, I/O, or processing errors
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use hozon::prelude::*;
+    /// # use std::path::PathBuf;
+    /// # #[tokio::main]
+    /// # async fn main() -> hozon::error::Result<()> {
+    /// let structured_data = vec![
+    ///     // Volume 1: Chapters 1-2
+    ///     vec![
+    ///         vec![PathBuf::from("./ch1/p1.jpg"), PathBuf::from("./ch1/p2.jpg")],
+    ///         vec![PathBuf::from("./ch2/p1.jpg"), PathBuf::from("./ch2/p2.jpg")],
+    ///     ],
+    ///     // Volume 2: Chapter 3
+    ///     vec![
+    ///         vec![PathBuf::from("./ch3/p1.jpg"), PathBuf::from("./ch3/p2.jpg")],
+    ///     ],
+    /// ];
+    ///
+    /// let config = HozonConfig::builder()
+    ///     .metadata(EbookMetadata::default_with_title("Pre-structured Series".to_string()))
+    ///     .target_path(PathBuf::from("./output"))
+    ///     .output_format(FileFormat::Epub)
+    ///     .build()?;
+    ///
+    /// config.convert_from_structured_data(structured_data).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn convert_from_structured_data(
         self,
         structured_data: Vec<Vec<Vec<PathBuf>>>,
@@ -310,7 +584,8 @@ impl HozonConfig {
                 let chapters_for_manual_grouping = collected_chapters_pages; // This is the Vec<Vec<PathBuf>> of chapters with their pages
                 let actual_total_chapters = chapters_for_manual_grouping.len();
 
-                if let Some(user_volume_sizes) = &config.volume_sizes_override {
+                if !config.volume_sizes_override.is_empty() {
+                    let user_volume_sizes = &config.volume_sizes_override;
                     chapter_counts_per_volume = user_volume_sizes.clone();
                     total_volumes_created = chapter_counts_per_volume.len();
 
