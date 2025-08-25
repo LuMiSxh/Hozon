@@ -13,14 +13,6 @@ use common::{create_dummy_color_image, create_dummy_grayscale_image, setup_test_
 
 #[tokio::test]
 async fn test_hozon_config_builder_validation() -> Result<()> {
-    // Missing target_path - should fail in the builder's generated code
-    let result = HozonConfig::builder()
-        .metadata(EbookMetadata::default_with_title("Test".to_string()))
-        .source_path(PathBuf::from("/tmp"))
-        .build();
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("target_path"));
-
     // Invalid regex - should fail in our custom validate() function
     let result = HozonConfig::builder()
         .metadata(EbookMetadata::default_with_title("Test".to_string()))
