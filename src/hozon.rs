@@ -67,6 +67,7 @@ pub struct HozonConfig {
     ///
     /// If [`create_output_directory`](HozonConfig::create_output_directory) is true,
     /// a subdirectory named after the ebook title will be created here.
+    #[builder(default)]
     pub target_path: PathBuf,
 
     /// Output file format for generated ebooks.
