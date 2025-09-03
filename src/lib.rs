@@ -98,11 +98,34 @@
 //!     .target_path(PathBuf::from("./output"))
 //!     .output_format(FileFormat::Epub)
 //!     .reading_direction(Direction::Rtl) // Right-to-left for manga
+//!     .volume_separator(" | ".to_string()) // Custom volume separator: "Series | Volume 1.epub"
 //!     .volume_grouping_strategy(VolumeGroupingStrategy::Name)
 //!     .image_analysis_sensibility(90) // High sensitivity for precise grouping
 //!     .build()?;
 //!
 //! config.convert_from_source().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Volume Separator Customization
+//!
+//! When multiple volumes are created, you can customize the separator between the series title and volume number:
+//!
+//! ```rust,no_run
+//! # use hozon::prelude::*;
+//! # use std::path::PathBuf;
+//! # #[tokio::main]
+//! # async fn main() -> hozon::error::Result<()> {
+//! let config = HozonConfig::builder()
+//!     .metadata(EbookMetadata::default_with_title("My Series".to_string()))
+//!     .source_path(PathBuf::from("./source"))
+//!     .target_path(PathBuf::from("./output"))
+//!     .volume_separator(" - ".to_string()) // Default: "My Series - Volume 1.cbz"
+//!     // .volume_separator(" | ".to_string()) // Pipe: "My Series | Volume 1.cbz"
+//!     // .volume_separator("_".to_string())   // Underscore: "My Series_Volume 1.cbz"
+//!     // .volume_separator(" ".to_string())   // Space only: "My Series Volume 1.cbz"
+//!     .build()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -143,6 +166,7 @@ pub mod collector;
 pub mod error;
 pub mod generator;
 pub mod hozon;
+pub mod path_utils;
 pub mod types;
 
 // Publicly expose the main `HozonConfig` struct and its builder

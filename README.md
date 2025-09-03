@@ -11,6 +11,7 @@
 ## Features
 
 - **Declarative Configuration**: Define your entire conversion task upfront using a rich builder pattern.
+- **Robust Path Handling**: Comprehensive support for long paths, special characters, and non-ASCII filenames across all platforms.
 - **Flexible Image Collection**: Adapt to various source directory structures (flat list of pages, chapters in subfolders) using `CollectionDepth`.
 - **Intelligent Content Structuring**: Group collected chapters into logical volumes using advanced strategies:
     - `Name`: Based on numerical patterns in chapter folder names (e.g., "01-01", "01-02").

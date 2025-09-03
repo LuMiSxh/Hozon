@@ -10,6 +10,7 @@ use tokio::sync::Semaphore;
 use crate::collector::{Collector, DEFAULT_NAME_GROUPING_REGEX};
 use crate::error::{Error, Result};
 use crate::generator::{Generator, cbz::Cbz, epub::EPub};
+use crate::path_utils::sanitize_filename;
 use crate::types::{
     CollectedContent, CollectionDepth, Direction, EbookMetadata, FileFormat, HozonExecutionMode,
     StructuredContent, VolumeGroupingStrategy, VolumeStructureReport,
@@ -118,6 +119,18 @@ pub struct HozonConfig {
     #[builder(default = "VolumeGroupingStrategy::Manual")]
     pub volume_grouping_strategy: VolumeGroupingStrategy,
 
+    /// Separator character(s) used between series title and volume number.
+    ///
+    /// When multiple volumes are generated, the filename format will be:
+    /// `{title}{separator}Volume {number}.{extension}`
+    ///
+    /// Examples:
+    /// - `" - "` → "My Series - Volume 1.cbz"
+    /// - `" | "` → "My Series | Volume 1.cbz"
+    /// - `"_"` → "My Series_Volume 1.cbz"
+    #[builder(default = "\" - \".to_string()")]
+    pub volume_separator: String,
+
     /// Custom regex pattern for extracting chapter numbers from directory names.
     ///
     /// If not provided, uses the default pattern that matches common numbering schemes
@@ -199,6 +212,7 @@ impl std::fmt::Debug for HozonConfig {
                 &self.image_analysis_sensibility,
             )
             .field("volume_grouping_strategy", &self.volume_grouping_strategy)
+            .field("volume_separator", &self.volume_separator)
             .field("chapter_name_regex_str", &self.chapter_name_regex_str)
             .field("page_name_regex_str", &self.page_name_regex_str)
             .field(
@@ -333,6 +347,10 @@ impl HozonConfig {
                 "`source_path` must be set for analysis.".to_string(),
             ));
         }
+
+        // Validate path format and characters
+        crate::path_utils::validate_path(&self.source_path)?;
+
         if !self.source_path.exists() {
             return Err(Error::NotFound(format!(
                 "Source path does not exist: {:?}",
@@ -345,7 +363,15 @@ impl HozonConfig {
                 "Source path is not a directory.".to_string(),
             ));
         }
-        Ok(())
+
+        // Try to normalize the path to catch potential long path issues early
+        match crate::path_utils::normalize_path(&self.source_path) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(Error::InvalidPath(
+                self.source_path.clone(),
+                format!("Path validation failed: {}", e),
+            )),
+        }
     }
 
     // --- Core conversion entry points ---
@@ -774,7 +800,8 @@ impl HozonConfig {
         _edited_data_override: Option<Vec<Vec<PathBuf>>>,
     ) -> Result<()> {
         let target_directory_path = if config.create_output_directory {
-            let path = PathBuf::from(&config.target_path).join(&config.metadata.title);
+            let path =
+                PathBuf::from(&config.target_path).join(&sanitize_filename(&config.metadata.title));
             if !path.exists() {
                 fs::create_dir_all(&path).await?;
             }
@@ -806,12 +833,12 @@ impl HozonConfig {
         for (i, volume_chapters_and_pages) in volumes_to_generate.into_iter().enumerate() {
             let current_volume_number = i + 1;
             let file_name_base = if total_volumes_to_create > 1 {
-                format!(
-                    "{} | Volume {}",
-                    config.metadata.title, current_volume_number
-                )
+                sanitize_filename(&format!(
+                    "{}{}Volume {}",
+                    config.metadata.title, config.volume_separator, current_volume_number
+                ))
             } else {
-                config.metadata.title.clone()
+                sanitize_filename(&config.metadata.title)
             };
             let target_dir_clone = target_directory_path.clone();
             let format_clone = config.output_format;

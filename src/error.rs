@@ -138,6 +138,18 @@ pub enum Error {
     /// or when paths don't meet expected criteria.
     #[error("The given path '{0:?}' is invalid: {1}")]
     InvalidPath(PathBuf, String),
+    /// Error for paths that exceed system limitations.
+    ///
+    /// Indicates that a file path is too long for the current system
+    /// or contains characters that cannot be properly processed.
+    #[error("Path too long or contains invalid characters: {0:?}")]
+    PathTooLong(PathBuf),
+    /// Error for UTF-8 conversion failures in file paths.
+    ///
+    /// Occurs when file paths contain non-UTF-8 sequences that cannot
+    /// be converted to strings for processing.
+    #[error("Path contains invalid UTF-8 sequences: {0:?}")]
+    PathUtf8Error(PathBuf),
     /// Error for failed asynchronous task execution.
     ///
     /// More specific than the general `Join` error, this covers

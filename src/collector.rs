@@ -5,7 +5,7 @@
 //! It includes tools for sorting files numerically and detecting chapter boundaries.
 
 use std::cmp::Ordering;
-use std::ffi::OsStr;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -20,6 +20,10 @@ use tokio::sync::Semaphore;
 use tokio::task::{JoinHandle, spawn_blocking};
 
 use crate::error::{Error, Result};
+use crate::path_utils::{
+    compare_paths_by_number_safe, extract_number_from_filename_safe, get_file_name_lossy,
+    get_file_name_safe, is_hidden_file, validate_path,
+};
 use crate::types::CollectionDepth;
 use crate::{AnalyzeFinding, AnalyzeReport, CollectedContent, VolumeGroupingStrategy};
 
@@ -310,9 +314,9 @@ impl<'a> Collector<'a> {
 
         // Example Check: Naming conventions and strategy recommendation
         let has_name_pattern = chapters.iter().any(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .map_or(false, |s| DEFAULT_NAME_GROUPING_REGEX.is_match(s))
+            get_file_name_safe(path)
+                .map(|name| DEFAULT_NAME_GROUPING_REGEX.is_match(&name))
+                .unwrap_or(false)
         });
 
         let recommended_strategy = if has_name_pattern {
@@ -385,16 +389,10 @@ impl<'a> Collector<'a> {
         // Check for special characters in paths that might cause issues
         for chapter_pages in &pages_per_chapter {
             for page_path in chapter_pages {
-                if let Some(path_str) = page_path.to_str() {
-                    // Check for problematic characters that might cause issues in zip files or file systems
-                    if path_str
-                        .chars()
-                        .any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
-                    {
-                        findings.push(AnalyzeFinding::SpecialCharactersInPath {
-                            path: page_path.clone(),
-                        });
-                    }
+                if let Err(_) = validate_path(page_path) {
+                    findings.push(AnalyzeFinding::SpecialCharactersInPath {
+                        path: page_path.clone(),
+                    });
                 }
             }
         }
@@ -542,10 +540,8 @@ impl<'a> Collector<'a> {
             let path = entry.path();
 
             // Skip hidden files
-            if let Some(file_name) = path.file_name() {
-                if file_name.to_string_lossy().starts_with('.') {
-                    continue;
-                }
+            if is_hidden_file(&path) {
+                continue;
             }
 
             // Apply directory/file filter
@@ -586,10 +582,8 @@ impl<'a> Collector<'a> {
             let path = entry.path();
 
             // Skip hidden files
-            if let Some(file_name) = path.file_name() {
-                if file_name.to_string_lossy().starts_with('.') {
-                    continue;
-                }
+            if is_hidden_file(&path) {
+                continue;
             }
 
             // Only include files, not directories
@@ -635,47 +629,19 @@ impl<'a> Collector<'a> {
     ///
     /// * `Option<f64>` - Extracted number or None if not found
     pub fn regex_parser(&self, s: &PathBuf, for_chapter_name: bool) -> Option<f64> {
-        let file_name = s
-            .file_name()
-            .unwrap_or(OsStr::new(""))
-            .to_str()
-            .unwrap_or("");
-
         let active_regex = if for_chapter_name {
             self.chapter_name_regex.unwrap_or(&DEFAULT_NUMBER_REGEX)
         } else {
             self.page_name_regex.unwrap_or(&DEFAULT_NUMBER_REGEX)
         };
 
-        active_regex
-            .captures_iter(file_name)
-            .last() // Take the last match, often more specific for versions/numbers
-            .and_then(|cap| {
-                let capture = cap.get(1).or_else(|| cap.get(0)).unwrap().as_str();
-                // Attempt to parse as f64, trimming leading zeros if it's an integer part
-                if capture.contains('.') {
-                    capture.parse::<f64>().ok()
-                } else {
-                    capture.trim_start_matches('0').parse::<f64>().ok()
-                }
-            })
+        extract_number_from_filename_safe(s, active_regex)
     }
 
     /// Sorts paths by numeric values in their file stem using default regex.
     /// This is mainly for internal use when no specific sorting or custom regex is provided.
     pub fn sort_name_by_number_default(a: &PathBuf, b: &PathBuf) -> Ordering {
-        let an = DEFAULT_NUMBER_REGEX
-            .captures_iter(a.file_name().unwrap().to_str().unwrap_or(""))
-            .last()
-            .and_then(|cap| cap.get(0))
-            .and_then(|m| m.as_str().trim_start_matches('0').parse::<f64>().ok());
-        let bn = DEFAULT_NUMBER_REGEX
-            .captures_iter(b.file_name().unwrap().to_str().unwrap_or(""))
-            .last()
-            .and_then(|cap| cap.get(0))
-            .and_then(|m| m.as_str().trim_start_matches('0').parse::<f64>().ok());
-
-        an.partial_cmp(&bn).unwrap_or(Ordering::Equal)
+        compare_paths_by_number_safe(a, b, &DEFAULT_NUMBER_REGEX)
     }
 
     /// Sorts paths by numeric values found in their names using the collector's configured regex.
@@ -691,35 +657,34 @@ impl<'a> Collector<'a> {
     /// Uses the default grouping regex for volume/chapter identification.
     pub fn sort_by_name_volume_chapter_default(a: &PathBuf, b: &PathBuf) -> Ordering {
         fn parse_numbers(path: &PathBuf) -> (Option<f64>, Option<f64>) {
-            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if let Some(caps) = DEFAULT_NAME_GROUPING_REGEX.captures(file_name) {
-                    let full_match = caps.get(0).unwrap().as_str(); // e.g., "01-23.5"
-                    let parts: Vec<&str> = full_match.split('-').collect();
-                    let volume_part = parts.first().unwrap_or(&"0");
-                    let chapter_part_with_ext = parts.get(1).unwrap_or(&"0");
+            let file_name = get_file_name_lossy(path);
+            if let Some(caps) = DEFAULT_NAME_GROUPING_REGEX.captures(&file_name) {
+                let full_match = caps.get(0).unwrap().as_str(); // e.g., "01-23.5"
+                let parts: Vec<&str> = full_match.split('-').collect();
+                let volume_part = parts.first().unwrap_or(&"0");
+                let chapter_part_with_ext = parts.get(1).unwrap_or(&"0");
 
-                    let volume = volume_part.trim_start_matches('0').parse::<f64>().ok();
-                    let chapter = chapter_part_with_ext
-                        .split('.')
-                        .next() // "23.5" -> "23"
-                        .unwrap_or("0")
-                        .trim_start_matches('0')
+                let volume = volume_part.trim_start_matches('0').parse::<f64>().ok();
+                let chapter = chapter_part_with_ext
+                    .split('.')
+                    .next() // "23.5" -> "23"
+                    .unwrap_or("0")
+                    .trim_start_matches('0')
+                    .parse::<f64>()
+                    .ok();
+
+                // For the decimal part, try to append it if present
+                let decimal_part = chapter_part_with_ext.split('.').nth(1);
+                let chapter = if let (Some(c), Some(d_str)) = (chapter, decimal_part) {
+                    d_str
                         .parse::<f64>()
-                        .ok();
+                        .ok()
+                        .map(|d| c + d / (10_f64.powi(d_str.len() as i32)))
+                } else {
+                    chapter
+                };
 
-                    // For the decimal part, try to append it if present
-                    let decimal_part = chapter_part_with_ext.split('.').nth(1);
-                    let chapter = if let (Some(c), Some(d_str)) = (chapter, decimal_part) {
-                        d_str
-                            .parse::<f64>()
-                            .ok()
-                            .map(|d| c + d / (10_f64.powi(d_str.len() as i32)))
-                    } else {
-                        chapter
-                    };
-
-                    return (volume, chapter);
-                }
+                return (volume, chapter);
             }
             (None, None)
         }

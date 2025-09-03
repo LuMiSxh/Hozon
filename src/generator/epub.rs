@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::generator::Generator;
+use crate::path_utils::{normalize_path, path_to_string_lossy};
 use crate::types::{Direction, EbookMetadata, get_file_info};
 use async_trait::async_trait;
 use epub_builder::{EpubBuilder, EpubContent, EpubVersion, ZipLibrary};
@@ -50,9 +51,26 @@ impl EPub {
     ///
     /// * `Result<&mut Self>` - Self reference for method chaining or an error
     pub fn set_cover(&mut self, cover_image_path: &PathBuf) -> Result<&mut Self> {
-        let (cover_extension, cover_mime) = get_file_info(cover_image_path)?;
+        // Normalize the cover image path to handle long paths and special characters
+        let normalized_path = normalize_path(cover_image_path).map_err(|e| {
+            Error::InvalidPath(
+                cover_image_path.clone(),
+                format!("Failed to normalize cover image path: {}", e),
+            )
+        })?;
 
-        let cover_file = File::open(cover_image_path)?;
+        let (cover_extension, cover_mime) = get_file_info(&normalized_path)?;
+
+        let cover_file = File::open(&normalized_path).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to open cover image '{}': {}",
+                    path_to_string_lossy(&normalized_path),
+                    e
+                ),
+            ))
+        })?;
 
         // Add cover image as `cover.ext` inside `images/` directory
         let internal_cover_path = format!("images/cover.{}", cover_extension);
@@ -124,10 +142,27 @@ impl EPub {
         resource_path: &str,
         image_path: &PathBuf,
     ) -> Result<&mut Self> {
-        let (_, image_mime) = get_file_info(image_path)?;
+        // Normalize the image path to handle long paths and special characters
+        let normalized_path = normalize_path(image_path).map_err(|e| {
+            Error::InvalidPath(
+                image_path.clone(),
+                format!("Failed to normalize image path: {}", e),
+            )
+        })?;
 
-        // Open the file asynchronously
-        let file = tokio::fs::File::open(image_path).await?;
+        let (_, image_mime) = get_file_info(&normalized_path)?;
+
+        // Open the file asynchronously using the normalized path
+        let file = tokio::fs::File::open(&normalized_path).await.map_err(|e| {
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to open image file '{}': {}",
+                    path_to_string_lossy(&normalized_path),
+                    e
+                ),
+            ))
+        })?;
 
         let file_std = file.into_std().await;
         let epub_ref = &mut self.epub;
@@ -154,14 +189,17 @@ impl Generator for EPub {
 
         epub.stylesheet(include_bytes!("../../templates/Epub.css").as_slice())?;
 
+        // Normalize the output directory path to handle long paths
+        let normalized_output_dir = normalize_path(output_dir)?;
+
         // Ensure output directory exists
-        if !output_dir.exists() {
-            std::fs::create_dir_all(output_dir)?;
+        if !normalized_output_dir.exists() {
+            std::fs::create_dir_all(&normalized_output_dir)?;
         }
 
         Ok(EPub {
             epub,
-            output_path: output_dir.to_path_buf(),
+            output_path: normalized_output_dir,
             filename_base: filename_base.to_string(),
             reading_direction: Direction::Ltr, // Default, will be updated by set_metadata
         })
@@ -267,7 +305,19 @@ impl Generator for EPub {
             .output_path
             .join(format!("{}.epub", self.filename_base));
 
-        let file = File::create(&output_file_path)?;
+        // Normalize the output file path as well
+        let normalized_output_file = normalize_path(&output_file_path)?;
+
+        let file = File::create(&normalized_output_file).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to create EPUB file '{}': {}",
+                    path_to_string_lossy(&normalized_output_file),
+                    e
+                ),
+            ))
+        })?;
 
         self.epub.generate(file)?;
         Ok(())

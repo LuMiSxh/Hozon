@@ -1,5 +1,6 @@
 use crate::error::{Error, Result};
 use crate::generator::Generator;
+use crate::path_utils::{normalize_path, path_to_string_lossy};
 use crate::types::{EbookMetadata, get_file_info};
 use async_trait::async_trait;
 use chrono::prelude::*;
@@ -30,14 +31,20 @@ impl Generator for Cbz {
             .compression_method(CompressionMethod::Deflated)
             .unix_permissions(0o755);
 
+        // Normalize the output directory path to handle long paths
+        let normalized_output_dir = normalize_path(output_dir)?;
+
         // Ensure output directory exists
-        if !output_dir.exists() {
-            std::fs::create_dir_all(output_dir)?;
+        if !normalized_output_dir.exists() {
+            std::fs::create_dir_all(&normalized_output_dir)?;
         }
 
-        let output_file_path = output_dir.join(format!("{}.cbz", base_filename));
+        let output_file_path = normalized_output_dir.join(format!("{}.cbz", base_filename));
 
-        let file = File::create(&output_file_path)?;
+        // Normalize the output file path as well
+        let normalized_output_file = normalize_path(&output_file_path)?;
+
+        let file = File::create(&normalized_output_file)?;
 
         let zip = ZipWriter::new(file);
 
@@ -49,10 +56,27 @@ impl Generator for Cbz {
     }
 
     async fn add_page(&mut self, image_path: &PathBuf) -> Result<&mut Self> {
-        let (image_extension, _) = get_file_info(image_path)?;
+        // Normalize the image path to handle long paths and special characters
+        let normalized_path = normalize_path(image_path).map_err(|e| {
+            Error::InvalidPath(
+                image_path.clone(),
+                format!("Failed to normalize image path: {}", e),
+            )
+        })?;
 
-        // Open the file
-        let file = fs::File::open(image_path).await?;
+        let (image_extension, _) = get_file_info(&normalized_path)?;
+
+        // Open the file using the normalized path
+        let file = fs::File::open(&normalized_path).await.map_err(|e| {
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to open image file '{}': {}",
+                    path_to_string_lossy(&normalized_path),
+                    e
+                ),
+            ))
+        })?;
 
         let file_std = file.into_std().await;
         let options = self.options;
