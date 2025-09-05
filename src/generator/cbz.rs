@@ -22,6 +22,69 @@ pub struct Cbz {
     zip: Option<ZipWriter<File>>,
     options: SimpleFileOptions,
     page_index: usize, // 0-based index for pages added
+    has_cover: bool,   // Track if a custom cover has been added
+}
+
+impl Cbz {
+    /// Adds a custom cover page to the CBZ archive.
+    /// This will be added as "000_cover.jpg" and should be called before adding regular pages.
+    pub async fn add_cover_page(&mut self, cover_path: &PathBuf) -> Result<&mut Self> {
+        if self.has_cover {
+            return Err(Error::Unsupported("Cover already set".to_string()));
+        }
+
+        // Normalize the cover path to handle long paths and special characters
+        let normalized_path = normalize_path(cover_path).map_err(|e| {
+            Error::InvalidPath(
+                cover_path.clone(),
+                format!("Failed to normalize cover path: {}", e),
+            )
+        })?;
+
+        let (cover_extension, _) = get_file_info(&normalized_path)?;
+
+        // Open the file using the normalized path
+        let file = fs::File::open(&normalized_path).await.map_err(|e| {
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to open cover file '{}': {}",
+                    path_to_string_lossy(&normalized_path),
+                    e
+                ),
+            ))
+        })?;
+
+        let file_std = file.into_std().await;
+        let options = self.options;
+        let cover_file_name = format!("000_cover.{}", cover_extension);
+
+        let zip = match self.zip.as_mut() {
+            Some(z) => z,
+            None => {
+                return Err(Error::Unsupported("Zip writer not available".to_string()));
+            }
+        };
+
+        // Create the read-only memory map
+        let mmap = match spawn_blocking(move || unsafe { MmapOptions::new().map(&file_std) })
+            .await
+            .map_err(|e| Error::AsyncTaskError(e.to_string()))?
+        {
+            Ok(map) => map,
+            Err(e) => {
+                return Err(e.into());
+            }
+        };
+
+        // Add cover to zip
+        zip.start_file(cover_file_name.clone(), options)?;
+        zip.write_all(&mmap[..])?;
+
+        self.has_cover = true;
+
+        Ok(self)
+    }
 }
 
 #[async_trait]
@@ -52,6 +115,7 @@ impl Generator for Cbz {
             zip: Some(zip),
             options,
             page_index: 0,
+            has_cover: false,
         })
     }
 
@@ -80,7 +144,14 @@ impl Generator for Cbz {
 
         let file_std = file.into_std().await;
         let options = self.options;
-        let file_name = format!("page_{:03}.{}", self.page_index + 1, image_extension);
+        // If we have a cover, start numbering pages from 001, otherwise from 001 as well
+        // but the cover would be 000_cover if present
+        let page_number = if self.has_cover {
+            self.page_index + 1
+        } else {
+            self.page_index + 1
+        };
+        let file_name = format!("page_{:03}.{}", page_number, image_extension);
 
         let zip = match self.zip.as_mut() {
             Some(z) => z,

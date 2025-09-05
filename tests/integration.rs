@@ -51,6 +51,89 @@ async fn test_full_pipeline_default_deep_cbz() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_custom_cover_cbz() -> Result<()> {
+    let test_dirs = setup_test_dirs("custom_cover_cbz").await;
+
+    // Setup: source/Chapter 1/page_001.jpg, source/Chapter 2/page_001.jpg
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 1").join("001.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 2").join("001.jpg")).await?;
+
+    // Create a custom cover image
+    let cover_path = test_dirs.source_dir.join("custom_cover.jpg");
+    create_dummy_grayscale_image(&cover_path).await?;
+
+    let config = HozonConfig::builder()
+        .metadata(EbookMetadata::default_with_title(
+            "Comic with Custom Cover".to_string(),
+        ))
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
+        .output_format(FileFormat::Cbz)
+        .create_output_directory(true)
+        .build()?;
+
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source_with_cover(Some(cover_path)),
+    )
+    .await
+    .expect("Test timed out")?;
+
+    let expected_output_dir = test_dirs.target_dir.join("Comic with Custom Cover");
+    assert!(expected_output_dir.exists());
+
+    let expected_cbz_path = expected_output_dir.join("Comic with Custom Cover.cbz");
+    assert_valid_zip_file(&expected_cbz_path).await;
+
+    // Check ComicInfo.xml
+    let comic_info = get_comic_info_xml(&expected_cbz_path).await;
+    assert!(comic_info.contains("<Title>Comic with Custom Cover</Title>"));
+    assert!(comic_info.contains("<PageCount>2</PageCount>"));
+
+    // TODO: Check that 000_cover.jpg exists in the archive
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_custom_cover_epub() -> Result<()> {
+    let test_dirs = setup_test_dirs("custom_cover_epub").await;
+
+    // Setup: source/Chapter 1/page_001.jpg, source/Chapter 2/page_001.jpg
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 1").join("001.jpg")).await?;
+    create_dummy_color_image(&test_dirs.source_dir.join("Chapter 2").join("001.jpg")).await?;
+
+    // Create a custom cover image
+    let cover_path = test_dirs.source_dir.join("custom_cover.jpg");
+    create_dummy_grayscale_image(&cover_path).await?;
+
+    let config = HozonConfig::builder()
+        .metadata(EbookMetadata::default_with_title(
+            "EPUB with Custom Cover".to_string(),
+        ))
+        .source_path(test_dirs.source_dir.clone())
+        .target_path(test_dirs.target_dir.clone())
+        .output_format(FileFormat::Epub)
+        .create_output_directory(true)
+        .build()?;
+
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source_with_cover(Some(cover_path)),
+    )
+    .await
+    .expect("Test timed out")?;
+
+    let expected_output_dir = test_dirs.target_dir.join("EPUB with Custom Cover");
+    assert!(expected_output_dir.exists());
+
+    let expected_epub_path = expected_output_dir.join("EPUB with Custom Cover.epub");
+    assert!(expected_epub_path.exists());
+
+    // TODO: Check that custom cover is used in EPUB
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_flat_pages_workflow_epub() -> Result<()> {
     let test_dirs = setup_test_dirs("flat_pages_epub").await;
 
@@ -457,7 +540,7 @@ async fn test_error_on_empty_structured_data() -> Result<()> {
         result
             .unwrap_err()
             .to_string()
-            .contains("Provided structured data is empty")
+            .contains("Provided structured data contains no volumes or content")
     );
     Ok(())
 }

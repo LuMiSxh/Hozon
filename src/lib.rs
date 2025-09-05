@@ -40,6 +40,30 @@
 //!
 //! ## Advanced Usage
 //!
+//! ### Custom Cover Images
+//!
+//! Provide a custom cover image for cleaner handling instead of using the first page:
+//!
+//! ```rust,no_run
+//! use hozon::prelude::*;
+//! # use std::path::PathBuf;
+//! # #[tokio::main]
+//! # async fn main() -> hozon::error::Result<()> {
+//!
+//! // Convert with custom cover from source
+//! let config = HozonConfig::builder()
+//!     .metadata(EbookMetadata::default_with_title("My Comic".to_string()))
+//!     .source_path(PathBuf::from("./manga_chapters"))
+//!     .target_path(PathBuf::from("./output"))
+//!     .output_format(FileFormat::Cbz)
+//!     .build()?;
+//!
+//! let cover_path = Some(PathBuf::from("./cover.jpg"));
+//! config.convert_from_source_with_cover(cover_path).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ### Content Analysis
 //!
 //! Analyze your source content before conversion to understand its structure:

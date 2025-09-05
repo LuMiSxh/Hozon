@@ -379,6 +379,41 @@ impl HozonConfig {
     /// Starts the conversion by collecting chapters and pages from `source_path`.
     /// This method performs the full pipeline: analysis -> structuring -> generation.
     pub async fn convert_from_source(self) -> Result<()> {
+        self.convert_from_source_with_cover(None).await
+    }
+
+    /// Starts the conversion by collecting chapters and pages from `source_path` with optional custom cover.
+    /// This method performs the full pipeline: analysis -> structuring -> generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `custom_cover_path` - Optional path to a custom cover image file
+    ///
+    /// # Returns
+    ///
+    /// * `Result<()>` - Success or an error if conversion fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use hozon::HozonConfig;
+    /// # use std::path::PathBuf;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = HozonConfig::builder()
+    ///     .source_path("./manga")
+    ///     .target_path("./output")
+    ///     .build()?;
+    ///
+    /// let cover_path = Some(PathBuf::from("cover.jpg"));
+    /// config.convert_from_source_with_cover(cover_path).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn convert_from_source_with_cover(
+        self,
+        custom_cover_path: Option<PathBuf>,
+    ) -> Result<()> {
         self.preflight_check(HozonExecutionMode::FromSource)?;
 
         // 1. Create a collector and run the full analysis.
@@ -392,19 +427,12 @@ impl HozonConfig {
 
         let collected_content = collector.analyze_source_content().await?;
 
-        // Extract the collected page data from the analysis result.
-        let pages_to_convert = collected_content.chapters_with_pages;
-
-        if pages_to_convert.par_iter().all(Vec::is_empty) {
-            return Err(Error::NotFound(format!(
-                "No pages found in source path: {:?}",
-                self.source_path
-            )));
-        }
-
-        // 2. Delegate the rest of the process (structuring and generation)
-        //    to the `convert_from_collected_data` method
-        self.convert_from_collected_data(pages_to_convert).await
+        // Extract the collected page data from the analysis result and convert
+        self.convert_from_collected_data_with_cover(
+            collected_content.chapters_with_pages,
+            custom_cover_path,
+        )
+        .await
     }
 
     /// Analyzes the source directory based on the current configuration.
@@ -487,6 +515,51 @@ impl HozonConfig {
         self,
         collected_data: Vec<Vec<PathBuf>>,
     ) -> Result<()> {
+        self.convert_from_collected_data_with_cover(collected_data, None)
+            .await
+    }
+
+    /// Converts from collected data (chapters and pages) with optional custom cover.
+    ///
+    /// This method takes collected chapter and page data, performs structuring to organize
+    /// it into volumes, and then generates the final ebook files with an optional custom cover.
+    ///
+    /// # Arguments
+    ///
+    /// * `collected_data` - A 2-level nested vector representing chapters and pages
+    /// * `custom_cover_path` - Optional path to a custom cover image file
+    ///
+    /// # Returns
+    ///
+    /// * `Result<()>` - Success or an error if conversion fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use hozon::HozonConfig;
+    /// # use std::path::PathBuf;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = HozonConfig::builder()
+    ///     .source_path("./manga")
+    ///     .target_path("./output")
+    ///     .build()?;
+    ///
+    /// let chapters = vec![
+    ///     vec![PathBuf::from("chapter1/page1.jpg"), PathBuf::from("chapter1/page2.jpg")],
+    ///     vec![PathBuf::from("chapter2/page1.jpg"), PathBuf::from("chapter2/page2.jpg")],
+    /// ];
+    ///
+    /// let cover_path = Some(PathBuf::from("cover.jpg"));
+    /// config.convert_from_collected_data_with_cover(chapters, cover_path).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn convert_from_collected_data_with_cover(
+        self,
+        collected_data: Vec<Vec<PathBuf>>,
+        custom_cover_path: Option<PathBuf>,
+    ) -> Result<()> {
         self.preflight_check(HozonExecutionMode::FromCollectedData)?;
 
         if collected_data.is_empty() || collected_data.iter().all(|c| c.is_empty()) {
@@ -505,6 +578,7 @@ impl HozonConfig {
             &self,
             structured_content.volumes_with_chapters_and_pages,
             None,
+            custom_cover_path,
         )
         .await
     }
@@ -583,6 +657,52 @@ impl HozonConfig {
         self,
         structured_data: Vec<Vec<Vec<PathBuf>>>,
     ) -> Result<()> {
+        self.convert_from_structured_data_with_cover(structured_data, None)
+            .await
+    }
+
+    /// Converts from pre-structured data (volumes > chapters > pages) with optional custom cover.
+    ///
+    /// This is the most direct conversion method - it skips collection and structuring entirely.
+    ///
+    /// # Arguments
+    ///
+    /// * `structured_data` - A 3-level nested vector representing volumes, chapters, and pages
+    /// * `custom_cover_path` - Optional path to a custom cover image file
+    ///
+    /// # Returns
+    ///
+    /// * `Result<()>` - Success or an error if conversion fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use hozon::HozonConfig;
+    /// # use std::path::PathBuf;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = HozonConfig::builder()
+    ///     .source_path("./manga")
+    ///     .target_path("./output")
+    ///     .build()?;
+    ///
+    /// let volumes = vec![
+    ///     vec![
+    ///         vec![PathBuf::from("chapter1/page1.jpg"), PathBuf::from("chapter1/page2.jpg")],
+    ///         vec![PathBuf::from("chapter2/page1.jpg"), PathBuf::from("chapter2/page2.jpg")],
+    ///     ]
+    /// ];
+    ///
+    /// let cover_path = Some(PathBuf::from("cover.jpg"));
+    /// config.convert_from_structured_data_with_cover(volumes, cover_path).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn convert_from_structured_data_with_cover(
+        self,
+        structured_data: Vec<Vec<Vec<PathBuf>>>,
+        custom_cover_path: Option<PathBuf>,
+    ) -> Result<()> {
         self.preflight_check(HozonExecutionMode::FromStructuredData)?;
 
         if structured_data.is_empty()
@@ -591,12 +711,12 @@ impl HozonConfig {
                 .all(|v| v.is_empty() || v.iter().all(|c| c.is_empty()))
         {
             return Err(Error::Other(
-                "Provided structured data is empty.".to_string(),
+                "Provided structured data contains no volumes or content.".to_string(),
             ));
         }
 
         // 1. Generate Ebooks
-        Self::perform_generation(&self, structured_data, None).await
+        Self::perform_generation(&self, structured_data, None, custom_cover_path).await
     }
 
     // --- Private helper methods for pipeline steps ---
@@ -798,6 +918,7 @@ impl HozonConfig {
         config: &HozonConfig,
         volumes_to_generate: Vec<Vec<Vec<PathBuf>>>,
         _edited_data_override: Option<Vec<Vec<PathBuf>>>,
+        optional_cover_path: Option<PathBuf>,
     ) -> Result<()> {
         let target_directory_path = if config.create_output_directory {
             let path =
@@ -844,6 +965,7 @@ impl HozonConfig {
             let format_clone = config.output_format;
             let semaphore_clone = Arc::clone(&semaphore);
             let series_metadata_clone = config.metadata.clone();
+            let cover_path_clone = optional_cover_path.clone();
 
             // Extract chapter titles for metadata (from first page's parent folder name, or dummy name)
             let collected_chapter_titles: Vec<String> = volume_chapters_and_pages
@@ -868,6 +990,12 @@ impl HozonConfig {
                 match format_clone {
                     FileFormat::Cbz => {
                         let mut generator = Cbz::new(&target_dir_clone, &file_name_base)?;
+
+                        // Add custom cover if provided
+                        if let Some(cover_path) = &cover_path_clone {
+                            generator.add_cover_page(cover_path).await?;
+                        }
+
                         for chapter_pages in volume_chapters_and_pages.into_iter().flatten() {
                             // Flatten all pages in the volume
                             generator.add_page(&chapter_pages).await?;
@@ -884,20 +1012,26 @@ impl HozonConfig {
                         generator.save().await?;
                     }
                     FileFormat::Epub => {
-                        if volume_chapters_and_pages.is_empty()
-                            || volume_chapters_and_pages
-                                .first()
-                                .map_or(true, |c| c.is_empty())
-                        {
-                            return Err(Error::Unsupported(
-                                "Cannot create EPUB without a cover image (first page of first chapter)".to_string(),
-                            ));
-                        }
                         let mut generator = EPub::new(&target_dir_clone, &file_name_base)?;
-                        // EPUB generator takes the first page of the first chapter as cover
-                        generator.set_cover(
-                            volume_chapters_and_pages.first().unwrap().first().unwrap(),
-                        )?;
+
+                        // Use custom cover if provided, otherwise use first page of first chapter
+                        if let Some(cover_path) = &cover_path_clone {
+                            generator.set_cover(cover_path)?;
+                        } else {
+                            if volume_chapters_and_pages.is_empty()
+                                || volume_chapters_and_pages
+                                    .first()
+                                    .map_or(true, |c| c.is_empty())
+                            {
+                                return Err(Error::Unsupported(
+                                    "Cannot create EPUB without a cover image (first page of first chapter)".to_string(),
+                                ));
+                            }
+                            // EPUB generator takes the first page of the first chapter as cover
+                            generator.set_cover(
+                                volume_chapters_and_pages.first().unwrap().first().unwrap(),
+                            )?;
+                        }
 
                         generator
                             .set_metadata(
