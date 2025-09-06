@@ -376,6 +376,14 @@ impl HozonConfig {
 
     // --- Core conversion entry points ---
 
+    /// Performs only the structuring step and returns the result.
+    pub async fn structure_from_collected_data(
+        &self,
+        collected_data: Vec<Vec<PathBuf>>,
+    ) -> Result<StructuredContent> {
+        Self::perform_structuring(self, collected_data).await
+    }
+
     /// Starts the conversion by collecting chapters and pages from `source_path`.
     /// This method performs the full pipeline: analysis -> structuring -> generation.
     pub async fn convert_from_source(self) -> Result<()> {
