@@ -30,7 +30,7 @@
 //!
 //!     match config {
 //!         Ok(cfg) => {
-//!             if let Err(e) = cfg.convert_from_source().await {
+//!             if let Err(e) = cfg.convert_from_source(CoverOptions::None).await {
 //!                 match e {
 //!                     hozon::error::Error::NotFound(msg) => {
 //!                         eprintln!("Source not found: {}", msg);

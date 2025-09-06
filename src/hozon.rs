@@ -12,8 +12,8 @@ use crate::error::{Error, Result};
 use crate::generator::{Generator, cbz::Cbz, epub::EPub};
 use crate::path_utils::sanitize_filename;
 use crate::types::{
-    CollectedContent, CollectionDepth, Direction, EbookMetadata, FileFormat, HozonExecutionMode,
-    StructuredContent, VolumeGroupingStrategy, VolumeStructureReport,
+    CollectedContent, CollectionDepth, CoverOptions, Direction, EbookMetadata, FileFormat,
+    HozonExecutionMode, StructuredContent, VolumeGroupingStrategy, VolumeStructureReport,
 };
 
 /// The main Hozon conversion configuration, built declaratively using the builder pattern.
@@ -374,9 +374,53 @@ impl HozonConfig {
         }
     }
 
-    // --- Core conversion entry points ---
-
-    /// Performs only the structuring step and returns the result.
+    /// Performs only the structuring step on pre-collected chapter data.
+    ///
+    /// This method takes organized chapter and page data and groups them into logical
+    /// volumes based on the configured [`VolumeGroupingStrategy`]. Use this when you
+    /// want to structure data without performing the full conversion pipeline.
+    ///
+    /// # Arguments
+    ///
+    /// * `collected_data` - A vector of chapters, where each chapter is a vector of image file paths.
+    ///   The structure should be: `Vec<Chapter: Vec<PagePath>>`
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StructuredContent)` - Contains:
+    ///   - `volumes_with_chapters_and_pages`: Organized volume data ready for generation
+    ///   - `report`: Volume structuring report with statistics
+    ///   - `grouping_strategy_applied`: The strategy that was actually used
+    /// * `Err(Error)` - Structuring failed due to configuration or processing errors
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use hozon::prelude::*;
+    /// # use std::path::PathBuf;
+    /// # #[tokio::main]
+    /// # async fn main() -> hozon::error::Result<()> {
+    /// let chapters = vec![
+    ///     vec![PathBuf::from("ch1/page1.jpg"), PathBuf::from("ch1/page2.jpg")],
+    ///     vec![PathBuf::from("ch2/page1.jpg"), PathBuf::from("ch2/page2.jpg")],
+    ///     vec![PathBuf::from("ch3/page1.jpg"), PathBuf::from("ch3/page2.jpg")],
+    /// ];
+    ///
+    /// let config = HozonConfig::builder()
+    ///     .metadata(EbookMetadata::default_with_title("Structure Example".to_string()))
+    ///     .target_path(PathBuf::from("./output"))
+    ///     .volume_grouping_strategy(VolumeGroupingStrategy::Manual)
+    ///     .volume_sizes_override(vec![2, 1]) // 2 chapters in vol 1, 1 chapter in vol 2
+    ///     .build()?;
+    ///
+    /// let structured = config.structure_from_collected_data(chapters).await?;
+    ///
+    /// println!("Created {} volumes", structured.report.total_volumes_created);
+    /// println!("Volume chapter counts: {:?}", structured.report.chapter_counts_per_volume);
+    /// println!("Strategy used: {:?}", structured.grouping_strategy_applied);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn structure_from_collected_data(
         &self,
         collected_data: Vec<Vec<PathBuf>>,
@@ -384,69 +428,56 @@ impl HozonConfig {
         Self::perform_structuring(self, collected_data).await
     }
 
-    /// Starts the conversion by collecting chapters and pages from `source_path`.
-    /// This method performs the full pipeline: analysis -> structuring -> generation.
-    pub async fn convert_from_source(self) -> Result<()> {
-        self.convert_from_source_with_cover(None).await
-    }
-
-    /// Starts the conversion by collecting chapters and pages from `source_path` with optional custom cover.
-    /// This method performs the full pipeline: analysis -> structuring -> generation.
+    /// Analyzes the source directory structure and content without performing conversion.
     ///
-    /// # Arguments
-    ///
-    /// * `custom_cover_path` - Optional path to a custom cover image file
+    /// This method performs the initial analysis phase of the conversion pipeline,
+    /// scanning the source directory to collect chapters and pages while generating
+    /// a comprehensive report about the content structure, potential issues, and
+    /// recommended volume grouping strategies.
     ///
     /// # Returns
     ///
-    /// * `Result<()>` - Success or an error if conversion fails
+    /// * `Ok(CollectedContent)` - Contains:
+    ///   - `chapters_with_pages`: Organized chapter and page data ready for structuring
+    ///   - `report`: Detailed analysis findings and recommendations
+    /// * `Err(Error)` - Analysis failed due to source validation or I/O errors
     ///
     /// # Example
     ///
-    /// ```no_run
-    /// # use hozon::HozonConfig;
+    /// ```rust,no_run
+    /// # use hozon::prelude::*;
     /// # use std::path::PathBuf;
     /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn main() -> hozon::error::Result<()> {
     /// let config = HozonConfig::builder()
-    ///     .source_path("./manga")
-    ///     .target_path("./output")
+    ///     .metadata(EbookMetadata::default_with_title("Analysis Example".to_string()))
+    ///     .source_path(PathBuf::from("./manga_source"))
+    ///     .target_path(PathBuf::from("./output"))
+    ///     .volume_grouping_strategy(VolumeGroupingStrategy::Name)
     ///     .build()?;
     ///
-    /// let cover_path = Some(PathBuf::from("cover.jpg"));
-    /// config.convert_from_source_with_cover(cover_path).await?;
+    /// let analysis = config.analyze_source().await?;
+    ///
+    /// println!("Found {} chapters", analysis.chapters_with_pages.len());
+    /// println!("Recommended strategy: {:?}", analysis.report.recommended_strategy);
+    ///
+    /// // Check for any issues found during analysis
+    /// for finding in &analysis.report.findings {
+    ///     match finding {
+    ///         AnalyzeFinding::ConsistentNamingFound { pattern, .. } => {
+    ///             println!("Good: Consistent naming pattern: {}", pattern);
+    ///         }
+    ///         AnalyzeFinding::InconsistentPageCount { chapter_path, expected, found } => {
+    ///             println!("Warning: Chapter {:?} has {} pages, expected {}",
+    ///                      chapter_path, found, expected);
+    ///         }
+    ///         _ => {} // Handle other findings as needed
+    ///     }
+    /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn convert_from_source_with_cover(
-        self,
-        custom_cover_path: Option<PathBuf>,
-    ) -> Result<()> {
-        self.preflight_check(HozonExecutionMode::FromSource)?;
-
-        // 1. Create a collector and run the full analysis.
-        let collector = Collector::new(
-            &self.source_path,
-            self.collection_depth,
-            self.compiled_chapter_name_regex.as_ref(),
-            self.compiled_page_name_regex.as_ref(),
-            self.image_analysis_sensibility,
-        );
-
-        let collected_content = collector.analyze_source_content().await?;
-
-        // Extract the collected page data from the analysis result and convert
-        self.convert_from_collected_data_with_cover(
-            collected_content.chapters_with_pages,
-            custom_cover_path,
-        )
-        .await
-    }
-
-    /// Analyzes the source directory based on the current configuration.
-    /// This method collects all content and runs a series of checks,
-    /// returning a detailed report without performing a conversion.
-    pub async fn analyze_source(self) -> Result<CollectedContent> {
+    pub async fn analyze_source(&self) -> Result<CollectedContent> {
         self.validate_source()?;
 
         let collector = Collector::new(
@@ -460,31 +491,21 @@ impl HozonConfig {
         collector.analyze_source_content().await
     }
 
-    /// Executes conversion using pre-collected chapter and page data.
+    // --- Core conversion entry points ---
+
+    /// Starts the full conversion pipeline from a source directory.
     ///
-    /// This method bypasses the collection and analysis phases, starting directly with
-    /// user-provided chapter and page paths. It performs:
-    /// 1. **Validation**: Ensures the provided data is valid and accessible
+    /// This method performs the complete conversion workflow:
+    /// 1. **Analysis**: Scans and analyzes the source directory structure
     /// 2. **Structuring**: Groups chapters into logical volumes based on the configured strategy
-    /// 3. **Generation**: Creates the final ebook files
-    ///
-    /// This is useful when you want to:
-    /// - Convert a subset of chapters from a larger collection
-    /// - Apply custom chapter selection or filtering logic
-    /// - Work with non-standard directory structures
-    /// - Integrate with external content management systems
+    /// 3. **Generation**: Creates the final ebook files in the specified format
     ///
     /// # Arguments
     ///
-    /// * `collected_data` - Vector of chapters, where each chapter is a vector of page file paths.
-    ///   For example: `vec![vec![page1.jpg, page2.jpg], vec![page3.jpg, page4.jpg]]`
-    ///   represents 2 chapters with 2 pages each.
-    ///
-    /// # Requirements
-    ///
-    /// - `target_path` must be set to a valid output location
-    /// - All provided file paths must exist and be readable
-    /// - At least one chapter with one page must be provided
+    /// * `cover_options` - Specifies how to handle cover images:
+    ///   - [`CoverOptions::None`]: Uses default behavior (first page for EPUB, no cover for CBZ)
+    ///   - [`CoverOptions::Single(path)`]: Uses the same cover image for all volumes
+    ///   - [`CoverOptions::PerVolume(map)`]: Uses different cover images per volume
     ///
     /// # Returns
     ///
@@ -498,139 +519,100 @@ impl HozonConfig {
     /// # use std::path::PathBuf;
     /// # #[tokio::main]
     /// # async fn main() -> hozon::error::Result<()> {
-    /// let collected_data = vec![
-    ///     vec![
-    ///         PathBuf::from("./images/chapter1/page1.jpg"),
-    ///         PathBuf::from("./images/chapter1/page2.jpg"),
-    ///     ],
-    ///     vec![
-    ///         PathBuf::from("./images/chapter2/page1.jpg"),
-    ///         PathBuf::from("./images/chapter2/page2.jpg"),
-    ///     ],
+    /// let config = HozonConfig::builder()
+    ///     .metadata(EbookMetadata::default_with_title("My Comic".to_string()))
+    ///     .source_path(PathBuf::from("./source"))
+    ///     .target_path(PathBuf::from("./output"))
+    ///     .build()?;
+    ///
+    /// // Convert without custom cover
+    /// config.convert_from_source(CoverOptions::None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn convert_from_source(self, cover_options: CoverOptions) -> Result<()> {
+        self.preflight_check(HozonExecutionMode::FromSource)?;
+        let collected_content = self.analyze_source().await?;
+
+        self.convert_from_collected_data(collected_content.chapters_with_pages, cover_options)
+            .await
+    }
+
+    /// Starts the conversion pipeline from pre-collected chapter/page data.
+    ///
+    /// This method performs the structuring and generation steps of the conversion workflow:
+    /// 1. **Structuring**: Groups the provided chapters into logical volumes
+    /// 2. **Generation**: Creates the final ebook files in the specified format
+    ///
+    /// Use this method when you have already collected and organized your image files
+    /// and want to skip the initial analysis phase.
+    ///
+    /// # Arguments
+    ///
+    /// * `collected_data` - A vector of chapters, where each chapter is a vector of image file paths.
+    ///   The structure should be: `Vec<Chapter: Vec<PagePath>>`
+    /// * `cover_options` - Specifies how to handle cover images (see [`CoverOptions`] for details)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Conversion completed successfully
+    /// * `Err(Error)` - Conversion failed due to validation, I/O, or processing errors
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use hozon::prelude::*;
+    /// # use std::path::PathBuf;
+    /// # #[tokio::main]
+    /// # async fn main() -> hozon::error::Result<()> {
+    /// let chapters = vec![
+    ///     vec![PathBuf::from("ch1/page1.jpg"), PathBuf::from("ch1/page2.jpg")],
+    ///     vec![PathBuf::from("ch2/page1.jpg"), PathBuf::from("ch2/page2.jpg")],
     /// ];
     ///
     /// let config = HozonConfig::builder()
-    ///     .metadata(EbookMetadata::default_with_title("Custom Collection".to_string()))
+    ///     .metadata(EbookMetadata::default_with_title("My Comic".to_string()))
     ///     .target_path(PathBuf::from("./output"))
-    ///     .volume_grouping_strategy(VolumeGroupingStrategy::Manual)
     ///     .build()?;
     ///
-    /// config.convert_from_collected_data(collected_data).await?;
+    /// config.convert_from_collected_data(chapters, CoverOptions::None).await?;
     /// # Ok(())
     /// # }
     /// ```
     pub async fn convert_from_collected_data(
         self,
         collected_data: Vec<Vec<PathBuf>>,
-    ) -> Result<()> {
-        self.convert_from_collected_data_with_cover(collected_data, None)
-            .await
-    }
-
-    /// Converts from collected data (chapters and pages) with optional custom cover.
-    ///
-    /// This method takes collected chapter and page data, performs structuring to organize
-    /// it into volumes, and then generates the final ebook files with an optional custom cover.
-    ///
-    /// # Arguments
-    ///
-    /// * `collected_data` - A 2-level nested vector representing chapters and pages
-    /// * `custom_cover_path` - Optional path to a custom cover image file
-    ///
-    /// # Returns
-    ///
-    /// * `Result<()>` - Success or an error if conversion fails
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use hozon::HozonConfig;
-    /// # use std::path::PathBuf;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = HozonConfig::builder()
-    ///     .source_path("./manga")
-    ///     .target_path("./output")
-    ///     .build()?;
-    ///
-    /// let chapters = vec![
-    ///     vec![PathBuf::from("chapter1/page1.jpg"), PathBuf::from("chapter1/page2.jpg")],
-    ///     vec![PathBuf::from("chapter2/page1.jpg"), PathBuf::from("chapter2/page2.jpg")],
-    /// ];
-    ///
-    /// let cover_path = Some(PathBuf::from("cover.jpg"));
-    /// config.convert_from_collected_data_with_cover(chapters, cover_path).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn convert_from_collected_data_with_cover(
-        self,
-        collected_data: Vec<Vec<PathBuf>>,
-        custom_cover_path: Option<PathBuf>,
+        cover_options: CoverOptions,
     ) -> Result<()> {
         self.preflight_check(HozonExecutionMode::FromCollectedData)?;
+        let structured_content = Self::perform_structuring(&self, collected_data).await?;
 
-        if collected_data.is_empty() || collected_data.iter().all(|c| c.is_empty()) {
-            return Err(Error::Other(
-                "Provided collected data is empty.".to_string(),
-            ));
-        }
-
-        let config_ref = &self; // Reference to the configuration
-
-        // 1. Structure Volumes
-        let structured_content = Self::perform_structuring(config_ref, collected_data).await?;
-
-        // 2. Generate Ebooks
         Self::perform_generation(
             &self,
             structured_content.volumes_with_chapters_and_pages,
-            None,
-            custom_cover_path,
+            &cover_options, // Pass CoverOptions by reference
         )
         .await
     }
 
-    /// Executes conversion using pre-structured volume data.
+    /// Executes only the generation step from pre-structured volume data.
     ///
-    /// This method bypasses both the collection/analysis and structuring phases, starting
-    /// directly with fully organized volume data. It performs only the generation phase,
-    /// creating ebook files from the provided volume structure.
-    ///
-    /// This is the most direct conversion method, useful when you have:
-    /// - Already organized content into logical volumes
-    /// - Complex custom volume organization logic
-    /// - External volume structuring systems
-    /// - Need for maximum control over the final volume organization
+    /// This method performs only the final generation step of the conversion workflow,
+    /// creating ebook files from fully structured volume data. Use this when you have
+    /// already performed analysis and structuring yourself and want maximum control
+    /// over the volume organization.
     ///
     /// # Arguments
     ///
-    /// * `structured_data` - Vector of volumes, where each volume contains chapters,
-    ///   and each chapter contains page file paths. For example:
-    ///   ```text
-    ///   vec![
-    ///       // Volume 1
-    ///       vec![
-    ///           vec![page1.jpg, page2.jpg], // Chapter 1
-    ///           vec![page3.jpg, page4.jpg], // Chapter 2
-    ///       ],
-    ///       // Volume 2
-    ///       vec![
-    ///           vec![page5.jpg, page6.jpg], // Chapter 3
-    ///       ],
-    ///   ]
-    ///   ```
-    ///
-    /// # Requirements
-    ///
-    /// - `target_path` must be set to a valid output location
-    /// - All provided file paths must exist and be readable
-    /// - At least one volume with one chapter with one page must be provided
+    /// * `structured_data` - A vector of volumes, where each volume contains chapters,
+    ///   and each chapter contains page paths. The structure should be:
+    ///   `Vec<Volume: Vec<Chapter: Vec<PagePath>>>`
+    /// * `cover_options` - Specifies how to handle cover images (see [`CoverOptions`] for details)
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - Conversion completed successfully
-    /// * `Err(Error)` - Conversion failed due to validation, I/O, or processing errors
+    /// * `Ok(())` - Generation completed successfully
+    /// * `Err(Error)` - Generation failed due to validation, I/O, or processing errors
     ///
     /// # Example
     ///
@@ -639,97 +621,54 @@ impl HozonConfig {
     /// # use std::path::PathBuf;
     /// # #[tokio::main]
     /// # async fn main() -> hozon::error::Result<()> {
-    /// let structured_data = vec![
-    ///     // Volume 1: Chapters 1-2
+    /// let volumes = vec![
+    ///     // Volume 1
     ///     vec![
-    ///         vec![PathBuf::from("./ch1/p1.jpg"), PathBuf::from("./ch1/p2.jpg")],
-    ///         vec![PathBuf::from("./ch2/p1.jpg"), PathBuf::from("./ch2/p2.jpg")],
+    ///         vec![PathBuf::from("vol1/ch1/page1.jpg"), PathBuf::from("vol1/ch1/page2.jpg")],
+    ///         vec![PathBuf::from("vol1/ch2/page1.jpg"), PathBuf::from("vol1/ch2/page2.jpg")],
     ///     ],
-    ///     // Volume 2: Chapter 3
+    ///     // Volume 2
     ///     vec![
-    ///         vec![PathBuf::from("./ch3/p1.jpg"), PathBuf::from("./ch3/p2.jpg")],
+    ///         vec![PathBuf::from("vol2/ch1/page1.jpg"), PathBuf::from("vol2/ch1/page2.jpg")],
     ///     ],
     /// ];
     ///
     /// let config = HozonConfig::builder()
-    ///     .metadata(EbookMetadata::default_with_title("Pre-structured Series".to_string()))
+    ///     .metadata(EbookMetadata::default_with_title("My Series".to_string()))
     ///     .target_path(PathBuf::from("./output"))
-    ///     .output_format(FileFormat::Epub)
     ///     .build()?;
     ///
-    /// config.convert_from_structured_data(structured_data).await?;
+    /// config.convert_from_structured_data(volumes, CoverOptions::None).await?;
     /// # Ok(())
     /// # }
     /// ```
     pub async fn convert_from_structured_data(
         self,
         structured_data: Vec<Vec<Vec<PathBuf>>>,
-    ) -> Result<()> {
-        self.convert_from_structured_data_with_cover(structured_data, None)
-            .await
-    }
-
-    /// Converts from pre-structured data (volumes > chapters > pages) with optional custom cover.
-    ///
-    /// This is the most direct conversion method - it skips collection and structuring entirely.
-    ///
-    /// # Arguments
-    ///
-    /// * `structured_data` - A 3-level nested vector representing volumes, chapters, and pages
-    /// * `custom_cover_path` - Optional path to a custom cover image file
-    ///
-    /// # Returns
-    ///
-    /// * `Result<()>` - Success or an error if conversion fails
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use hozon::HozonConfig;
-    /// # use std::path::PathBuf;
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = HozonConfig::builder()
-    ///     .source_path("./manga")
-    ///     .target_path("./output")
-    ///     .build()?;
-    ///
-    /// let volumes = vec![
-    ///     vec![
-    ///         vec![PathBuf::from("chapter1/page1.jpg"), PathBuf::from("chapter1/page2.jpg")],
-    ///         vec![PathBuf::from("chapter2/page1.jpg"), PathBuf::from("chapter2/page2.jpg")],
-    ///     ]
-    /// ];
-    ///
-    /// let cover_path = Some(PathBuf::from("cover.jpg"));
-    /// config.convert_from_structured_data_with_cover(volumes, cover_path).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn convert_from_structured_data_with_cover(
-        self,
-        structured_data: Vec<Vec<Vec<PathBuf>>>,
-        custom_cover_path: Option<PathBuf>,
+        cover_options: CoverOptions,
     ) -> Result<()> {
         self.preflight_check(HozonExecutionMode::FromStructuredData)?;
-
-        if structured_data.is_empty()
-            || structured_data
-                .iter()
-                .all(|v| v.is_empty() || v.iter().all(|c| c.is_empty()))
-        {
-            return Err(Error::Other(
-                "Provided structured data contains no volumes or content.".to_string(),
-            ));
-        }
-
-        // 1. Generate Ebooks
-        Self::perform_generation(&self, structured_data, None, custom_cover_path).await
+        Self::perform_generation(&self, structured_data, &cover_options).await
     }
 
     // --- Private helper methods for pipeline steps ---
 
     /// Internal method to perform the volume structuring logic.
+    ///
+    /// This method takes collected chapters and groups them into logical volumes
+    /// based on the configured [`VolumeGroupingStrategy`]. It handles all the
+    /// complex logic for different grouping strategies including name-based grouping,
+    /// image analysis, manual grouping, and flat organization.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The configuration containing grouping strategy and other settings
+    /// * `collected_chapters_pages` - Vector of chapters with their page paths
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StructuredContent)` - Successfully structured volumes with detailed report
+    /// * `Err(Error)` - Structuring failed due to configuration or processing errors
     async fn perform_structuring(
         config: &HozonConfig,
         collected_chapters_pages: Vec<Vec<PathBuf>>,
@@ -922,11 +861,25 @@ impl HozonConfig {
     }
 
     /// Internal method to perform the ebook generation logic.
+    ///
+    /// This method handles the final step of creating ebook files from structured volume data.
+    /// It manages concurrent generation of multiple volumes, applies custom covers based on
+    /// the provided options, and delegates to format-specific generators (CBZ or EPUB).
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The configuration containing metadata, target paths, and format settings
+    /// * `volumes_to_generate` - The structured volume data ready for generation
+    /// * `cover_options` - Cover image options for the generated volumes
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - All volumes generated successfully
+    /// * `Err(Error)` - Generation failed due to I/O, format, or processing errors
     async fn perform_generation(
         config: &HozonConfig,
         volumes_to_generate: Vec<Vec<Vec<PathBuf>>>,
-        _edited_data_override: Option<Vec<Vec<PathBuf>>>,
-        optional_cover_path: Option<PathBuf>,
+        cover_options: &CoverOptions,
     ) -> Result<()> {
         let target_directory_path = if config.create_output_directory {
             let path =
@@ -973,7 +926,11 @@ impl HozonConfig {
             let format_clone = config.output_format;
             let semaphore_clone = Arc::clone(&semaphore);
             let series_metadata_clone = config.metadata.clone();
-            let cover_path_clone = optional_cover_path.clone();
+            let cover_path_for_this_volume = match cover_options {
+                CoverOptions::None => None,
+                CoverOptions::Single(path) => Some(path.clone()),
+                CoverOptions::PerVolume(map) => map.get(&i).cloned(),
+            };
 
             // Extract chapter titles for metadata (from first page's parent folder name, or dummy name)
             let collected_chapter_titles: Vec<String> = volume_chapters_and_pages
@@ -1000,7 +957,7 @@ impl HozonConfig {
                         let mut generator = Cbz::new(&target_dir_clone, &file_name_base)?;
 
                         // Add custom cover if provided
-                        if let Some(cover_path) = &cover_path_clone {
+                        if let Some(cover_path) = &cover_path_for_this_volume {
                             generator.add_cover_page(cover_path).await?;
                         }
 
@@ -1023,7 +980,7 @@ impl HozonConfig {
                         let mut generator = EPub::new(&target_dir_clone, &file_name_base)?;
 
                         // Use custom cover if provided, otherwise use first page of first chapter
-                        if let Some(cover_path) = &cover_path_clone {
+                        if let Some(cover_path) = &cover_path_for_this_volume {
                             generator.set_cover(cover_path)?;
                         } else {
                             if volume_chapters_and_pages.is_empty()

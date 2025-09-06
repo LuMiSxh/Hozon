@@ -32,9 +32,12 @@ async fn test_custom_volume_separator_pipe() -> Result<()> {
         .volume_separator(" | ".to_string()) // Custom pipe separator
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Pipe Separator Series");
     assert!(expected_output_dir.exists());
@@ -69,9 +72,12 @@ async fn test_custom_volume_separator_underscore() -> Result<()> {
         .volume_separator("_".to_string()) // Custom underscore separator
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Underscore Series");
     assert!(expected_output_dir.exists());
@@ -106,9 +112,12 @@ async fn test_custom_volume_separator_space() -> Result<()> {
         .volume_separator(" ".to_string()) // Just a space separator
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Space Series");
     assert!(expected_output_dir.exists());
@@ -143,9 +152,12 @@ async fn test_default_volume_separator() -> Result<()> {
         // No custom separator - should use default " - "
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Default Series");
     assert!(expected_output_dir.exists());
@@ -178,9 +190,12 @@ async fn test_single_volume_no_separator() -> Result<()> {
         .volume_separator(" | ".to_string()) // Custom separator should be ignored for single volume
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Single Volume");
     assert!(expected_output_dir.exists());

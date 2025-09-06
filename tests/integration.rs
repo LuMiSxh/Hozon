@@ -32,9 +32,12 @@ async fn test_full_pipeline_default_deep_cbz() -> Result<()> {
         .create_output_directory(true) // Should create target/My Default Comic/
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("My Default Comic");
     assert!(expected_output_dir.exists());
@@ -74,7 +77,7 @@ async fn test_custom_cover_cbz() -> Result<()> {
 
     timeout(
         LONG_TEST_TIMEOUT,
-        config.convert_from_source_with_cover(Some(cover_path)),
+        config.convert_from_source(CoverOptions::Single(cover_path)),
     )
     .await
     .expect("Test timed out")?;
@@ -118,7 +121,7 @@ async fn test_custom_cover_epub() -> Result<()> {
 
     timeout(
         LONG_TEST_TIMEOUT,
-        config.convert_from_source_with_cover(Some(cover_path)),
+        config.convert_from_source(CoverOptions::Single(cover_path)),
     )
     .await
     .expect("Test timed out")?;
@@ -160,7 +163,7 @@ async fn test_flat_pages_workflow_epub() -> Result<()> {
 
     timeout(
         LONG_TEST_TIMEOUT,
-        config.convert_from_collected_data(collected_data),
+        config.convert_from_collected_data(collected_data, CoverOptions::None),
     )
     .await
     .expect("Test timed out")?;
@@ -194,9 +197,12 @@ async fn test_name_grouping_strategy_cbz() -> Result<()> {
         .volume_grouping_strategy(VolumeGroupingStrategy::Name)
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("My Name Grouped Series");
     assert!(expected_output_dir.exists());
@@ -244,9 +250,12 @@ async fn test_image_analysis_grouping_epub() -> Result<()> {
         .image_analysis_sensibility(90) // High sensibility means strict grayscale
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Image Analysis Series");
     assert!(expected_output_dir.exists());
@@ -289,9 +298,12 @@ async fn test_manual_grouping_with_override_epub() -> Result<()> {
         .volume_sizes_override(vec![2, 2]) // Manual override: 2 volumes, 2 chapters each
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Manual Grouping Book");
     assert!(expected_output_dir.exists());
@@ -334,9 +346,12 @@ async fn test_metadata_propagation_and_custom_fields_cbz() -> Result<()> {
         .output_format(FileFormat::Cbz)
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("Metadata Test Comic");
     let expected_cbz_path = expected_output_dir.join("Metadata Test Comic.cbz");
@@ -391,9 +406,12 @@ async fn test_metadata_xml_escaping_cbz() -> Result<()> {
         .output_format(FileFormat::Cbz)
         .build()?;
 
-    timeout(LONG_TEST_TIMEOUT, config.convert_from_source())
-        .await
-        .expect("Test timed out")?;
+    timeout(
+        LONG_TEST_TIMEOUT,
+        config.convert_from_source(CoverOptions::None),
+    )
+    .await
+    .expect("Test timed out")?;
 
     let expected_output_dir = test_dirs.target_dir.join("XML Escaping Test");
     let expected_cbz_path = expected_output_dir.join("XML Escaping Test.cbz");
@@ -494,7 +512,7 @@ async fn test_error_on_non_existent_source() -> Result<()> {
         .target_path(test_dirs.target_dir.clone())
         .build()?;
 
-    let result = config.convert_from_source().await;
+    let result = config.convert_from_source(CoverOptions::None).await;
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -513,14 +531,12 @@ async fn test_error_on_empty_collected_data() -> Result<()> {
         .build()?;
 
     let collected_data: Vec<Vec<PathBuf>> = Vec::new();
-    let result = config.convert_from_collected_data(collected_data).await;
+    let result = config
+        .convert_from_collected_data(collected_data, CoverOptions::None)
+        .await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Provided collected data is empty")
-    );
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("No volumes found for generation"));
     Ok(())
 }
 
@@ -534,13 +550,11 @@ async fn test_error_on_empty_structured_data() -> Result<()> {
         .build()?;
 
     let structured_data: Vec<Vec<Vec<PathBuf>>> = Vec::new();
-    let result = config.convert_from_structured_data(structured_data).await;
+    let result = config
+        .convert_from_structured_data(structured_data, CoverOptions::None)
+        .await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Provided structured data contains no volumes or content")
-    );
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("No volumes found for generation"));
     Ok(())
 }

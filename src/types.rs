@@ -144,6 +144,23 @@ impl EbookMetadata {
     }
 }
 
+/// Options for specifying cover images during conversion.
+/// This enum allows for no cover, a single custom cover, or per-volume covers.
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Default)]
+pub enum CoverOptions {
+    /// No custom cover is provided. The generator will use its default behavior
+    /// (e.g., first page for EPUB, no cover for CBZ).
+    #[default]
+    None,
+    /// A single cover image is applied to every volume generated in the task.
+    Single(PathBuf),
+    /// A map of volume indices to cover image paths, allowing a different
+    /// cover for each volume.
+    PerVolume(HashMap<usize, PathBuf>),
+}
+
 /// Immutable configuration for a Hozon conversion task, established during `HozonConfigBuilder::build()`.
 /// This holds all the user-defined settings for how the conversion should proceed.
 #[derive(Debug, Clone, Default)]

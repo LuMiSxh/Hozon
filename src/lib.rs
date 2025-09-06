@@ -32,7 +32,7 @@
 //!         .create_output_directory(true)
 //!         .build()?;
 //!
-//!     config.convert_from_source().await?;
+//!     config.convert_from_source(CoverOptions::None).await?;
 //!     println!("Conversion complete!");
 //!     Ok(())
 //! }
@@ -42,15 +42,15 @@
 //!
 //! ### Custom Cover Images
 //!
-//! Provide a custom cover image for cleaner handling instead of using the first page:
+//! Provide custom cover images using the `CoverOptions` parameter:
 //!
 //! ```rust,no_run
 //! use hozon::prelude::*;
 //! # use std::path::PathBuf;
+//! # use std::collections::HashMap;
 //! # #[tokio::main]
 //! # async fn main() -> hozon::error::Result<()> {
 //!
-//! // Convert with custom cover from source
 //! let config = HozonConfig::builder()
 //!     .metadata(EbookMetadata::default_with_title("My Comic".to_string()))
 //!     .source_path(PathBuf::from("./manga_chapters"))
@@ -58,8 +58,17 @@
 //!     .output_format(FileFormat::Cbz)
 //!     .build()?;
 //!
-//! let cover_path = Some(PathBuf::from("./cover.jpg"));
-//! config.convert_from_source_with_cover(cover_path).await?;
+//! // Option 1: Single cover for all volumes
+//! config.convert_from_source(CoverOptions::Single(PathBuf::from("./cover.jpg"))).await?;
+//!
+//! // Option 2: Different covers per volume
+//! let mut covers = HashMap::new();
+//! covers.insert(0, PathBuf::from("./volume1_cover.jpg"));
+//! covers.insert(1, PathBuf::from("./volume2_cover.jpg"));
+//! // config.convert_from_source(CoverOptions::PerVolume(covers)).await?;
+//!
+//! // Option 3: No custom cover (use default behavior)
+//! // config.convert_from_source(CoverOptions::None).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -127,7 +136,7 @@
 //!     .image_analysis_sensibility(90) // High sensitivity for precise grouping
 //!     .build()?;
 //!
-//! config.convert_from_source().await?;
+//! config.convert_from_source(CoverOptions::None).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -150,6 +159,8 @@
 //!     // .volume_separator("_".to_string())   // Underscore: "My Series_Volume 1.cbz"
 //!     // .volume_separator(" ".to_string())   // Space only: "My Series Volume 1.cbz"
 //!     .build()?;
+//!
+//! config.convert_from_source(CoverOptions::None).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -199,8 +210,8 @@ pub use hozon::HozonConfigBuilder;
 
 // Re-export error and core types for direct access
 pub use types::{
-    AnalyzeFinding, AnalyzeReport, CollectedContent, CollectionDepth, Direction, EbookMetadata,
-    FileFormat, HozonExecutionMode, StructuredContent, VolumeGroupingStrategy,
+    AnalyzeFinding, AnalyzeReport, CollectedContent, CollectionDepth, CoverOptions, Direction,
+    EbookMetadata, FileFormat, HozonExecutionMode, StructuredContent, VolumeGroupingStrategy,
     VolumeStructureReport,
 };
 
@@ -221,9 +232,9 @@ pub use types::{
 /// - **Execution Modes**: `HozonExecutionMode`
 pub mod prelude {
     pub use super::{
-        AnalyzeFinding, AnalyzeReport, CollectedContent, CollectionDepth, Direction, EbookMetadata,
-        FileFormat, HozonConfig, HozonConfigBuilder, HozonExecutionMode, StructuredContent,
-        VolumeGroupingStrategy, VolumeStructureReport, error, generator, types,
+        AnalyzeFinding, AnalyzeReport, CollectedContent, CollectionDepth, CoverOptions, Direction,
+        EbookMetadata, FileFormat, HozonConfig, HozonConfigBuilder, HozonExecutionMode,
+        StructuredContent, VolumeGroupingStrategy, VolumeStructureReport, error, generator, types,
     };
     pub use crate::collector::Collector;
     pub use regex::Regex;

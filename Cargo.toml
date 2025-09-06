@@ -1,6 +1,6 @@
 [package]
 name = "hozon"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["LuMiSxh"]
 edition = "2024"
 description = "A library for converting image-based content to ebook formats (CBZ/EPUB)"
